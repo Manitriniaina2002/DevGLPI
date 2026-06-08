@@ -1,0 +1,49 @@
+# Backend stack: PostgreSQL + API
+# Start: docker compose up -d
+# Stop:  docker compose down
+#
+# For local GLPI: start GLPI first with
+#   docker compose -f docker-compose.glpi.local.yml up -d
+# then connect backend to it with
+#   docker compose -f docker-compose.yml -f docker-compose.glpi.local.yml up -d
+# (backend will auto-detect local GLPI at http://nginx)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: dashbord-achat-postgres
+    environment:
+      POSTGRES_DB: dashboard_achat
+      POSTGRES_USER: dashboard
+      POSTGRES_PASSWORD: dashboard
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dashboard -d dashboard_achat"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+    container_name: dashbord-achat-backend
+    ports:
+      - "8000:8000"
+    environment:
+      USE_MOCK_DATA: "${USE_MOCK_DATA:-true}"
+      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      DATABASE_URL: postgresql://dashboard:dashboard@postgres:5432/dashboard_achat
+      GLPI_BASE_URL: "${GLPI_BASE_URL:-http://nginx}"
+      GLPI_APP_TOKEN: "${GLPI_APP_TOKEN:-}"
+      GLPI_USER_TOKEN: "${GLPI_USER_TOKEN:-}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

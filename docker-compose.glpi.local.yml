@@ -1,0 +1,132 @@
+# Local GLPI stack for development
+# Start: docker compose -f docker-compose.glpi.local.yml up -d
+# Stop:  docker compose -f docker-compose.glpi.local.yml down
+# phpMyAdmin: docker compose -f docker-compose.glpi.local.yml --profile tools up -d
+
+services:
+  glpi:
+    image: "glpi/glpi:11.0.6"
+    restart: unless-stopped
+    hostname: new-glpi
+    volumes:
+      - "./storage/glpi:/var/glpi:rw"
+      - "./php/glpi-session.ini:/usr/local/etc/php/conf.d/99-glpi-session.ini:ro"
+      - "./cron/glpi-notifications:/etc/cron.d/glpi-notifications:ro"
+    env_file: .env
+    environment:
+      TZ: "Indian/Antananarivo"
+      GLPI_CRONTAB_ENABLED: "1"
+    depends_on:
+      base:
+        condition: service_healthy
+    expose:
+      - "80"
+    networks:
+      - glpi-frontend
+      - glpi-backend
+    security_opt:
+      - no-new-privileges:true
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  nginx:
+    image: nginx:alpine
+    restart: unless-stopped
+    hostname: glpi-nginx
+    ports:
+      - "1443:443"
+      - "1080:80"
+    volumes:
+      - "./nginx/glpi.conf:/etc/nginx/conf.d/default.conf:ro"
+      - "./nginx/certs:/etc/ssl/glpi:ro"
+    environment:
+      TZ: "Indian/Antananarivo"
+    depends_on:
+      - glpi
+    networks:
+      - glpi-frontend
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
+
+  base:
+    image: "mysql:8.0"
+    restart: unless-stopped
+    hostname: glpi-db
+    volumes:
+      - "./storage/mysql:/var/lib/mysql"
+      - "./mysql/conf.d/glpi.cnf:/etc/mysql/conf.d/glpi.cnf:ro"
+      - "./storage/mysql-backup:/backup"
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"
+      MYSQL_DATABASE: ${GLPI_DB_NAME}
+      MYSQL_USER: ${GLPI_DB_USER}
+      MYSQL_PASSWORD: ${GLPI_DB_PASSWORD}
+      TZ: "+03:00"
+    healthcheck:
+      test: mysqladmin ping -h 127.0.0.1 -u $$MYSQL_USER --password=$$MYSQL_PASSWORD
+      start_period: 15s
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    expose:
+      - "3306"
+    networks:
+      - glpi-backend
+    security_opt:
+      - no-new-privileges:true
+
+  glpi-cli:
+    image: "glpi/glpi:11.0.6"
+    restart: "no"
+    profiles: [tools]
+    hostname: glpi-cli
+    volumes:
+      - "./storage/glpi:/var/glpi:rw"
+    env_file: .env
+    environment:
+      TZ: "+03:00"
+    networks:
+      - glpi-backend
+    entrypoint: "/bin/bash"
+    stdin_open: true
+    tty: true
+
+  db-admin:
+    image: phpmyadmin:latest
+    restart: unless-stopped
+    profiles: [tools]
+    ports:
+      - "127.0.0.1:8080:80"
+    environment:
+      PMA_HOST: base
+      PMA_PORT: 3306
+      PMA_USER: ${GLPI_DB_USER}
+      PMA_PASSWORD: ${GLPI_DB_PASSWORD}
+      TZ: "Indian/Antananarivo"
+      UPLOAD_LIMIT: 256M
+    depends_on:
+      base:
+        condition: service_healthy
+    networks:
+      - glpi-backend
+
+networks:
+  glpi-frontend:
+    driver: bridge
+    name: glpi-frontend
+  glpi-backend:
+    driver: bridge
+    name: glpi-backend
+    internal: true
