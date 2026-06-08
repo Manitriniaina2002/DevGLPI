@@ -1,13 +1,3 @@
-# Backend stack: PostgreSQL + API
-# Start: docker compose up -d
-# Stop:  docker compose down
-#
-# For local GLPI: start GLPI first with
-#   docker compose -f docker-compose.glpi.local.yml up -d
-# then connect backend to it with
-#   docker compose -f docker-compose.yml -f docker-compose.glpi.local.yml up -d
-# (backend will auto-detect local GLPI at http://nginx)
-
 services:
   postgres:
     image: postgres:16-alpine
@@ -34,16 +24,26 @@ services:
     ports:
       - "8000:8000"
     environment:
-      USE_MOCK_DATA: "${USE_MOCK_DATA:-true}"
-      CORS_ORIGINS: '["http://localhost:3000","http://127.0.0.1:3000"]'
+      USE_MOCK_DATA: "${USE_MOCK_DATA:-false}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-[\"http://localhost:3000\",\"http://127.0.0.1:3000\"]}"
       DATABASE_URL: postgresql://dashboard:dashboard@postgres:5432/dashboard_achat
       GLPI_BASE_URL: "${GLPI_BASE_URL:-http://nginx}"
       GLPI_APP_TOKEN: "${GLPI_APP_TOKEN:-}"
       GLPI_USER_TOKEN: "${GLPI_USER_TOKEN:-}"
+      GLPI_PURCHASE_CATEGORY_ID: "${GLPI_PURCHASE_CATEGORY_ID:-0}"
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - default
+      - glpi-frontend
     restart: unless-stopped
 
 volumes:
   postgres_data:
+
+networks:
+  default:
+  glpi-frontend:
+    external: true
+    name: glpi-frontend
