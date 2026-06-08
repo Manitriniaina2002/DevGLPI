@@ -113,6 +113,9 @@ PURCHASE_CATEGORY_ID: Optional[int] = (
 # ─────────────────────────────────────────────────────────────────
 # Application FastAPI
 # ─────────────────────────────────────────────────────────────────
+import sys
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 app = FastAPI(
     title="Dashboard Achat GLPI",
     version="3.0.0",
