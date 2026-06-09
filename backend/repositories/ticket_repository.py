@@ -1,5 +1,8 @@
 """
 repositories/ticket_repository.py — Accès et enrichissement des tickets
+Adapté au formulaire réel GLPI Forms "DEMANDE D'ACHAT" :
+  - Projet et Service sont dans le CONTENT du ticket (pas dans projects_id)
+  - Urgence est fixée à 3 par le formulaire → on la lit depuis content si dispo
 """
 from __future__ import annotations
 
@@ -9,6 +12,7 @@ from typing import Any, Optional
 from clients.glpi_client import GLPIClient
 from clients.mock_client import generate_mock_tickets
 from core.config import Settings
+from services.form_parser import FormParser
 
 
 def _parse_date(val: Any) -> date | None:
@@ -20,6 +24,9 @@ def _parse_date(val: Any) -> date | None:
         return None
 
 
+_form_parser = FormParser()
+
+
 class TicketRepository:
     def __init__(self, settings: Settings, client: GLPIClient | None = None):
         self._settings = settings
@@ -27,14 +34,18 @@ class TicketRepository:
 
     # ── Enrichissement ────────────────────────────────────────────
     def _enrich(self, tickets: list[dict]) -> list[dict]:
-        """Ajoute _project_name et _buyer_name depuis les API GLPI."""
+        """
+        Enrichit les tickets avec :
+        - _project_name : extrait du content HTML (formulaire GLPI Forms)
+        - _service      : service demandeur (content HTML)
+        - _buyer_name   : nom de l'utilisateur assigné ou demandeur
+        - _lieu         : lieu de livraison (content HTML)
+        - _urgence_int  : urgence réelle si renseignée dans le formulaire
+        """
         if self._settings.use_mock_data:
             return tickets
 
-        projects: dict[int, str] = {0: "Sans projet"}
-        for p in self._client.get_all("Project", {"fields": "id,name"}):
-            projects[p["id"]] = p.get("name", "")
-
+        # Charger les utilisateurs GLPI
         users: dict[int, str] = {0: "Non assigné"}
         for u in self._client.get_all("User", {"fields": "id,name,realname,firstname"}):
             uid = u["id"]
@@ -42,8 +53,38 @@ class TicketRepository:
             users[uid] = full
 
         for t in tickets:
-            pid = t.get("projects_id") or 0
-            t["_project_name"] = projects.get(pid, f"Projet #{pid}")
+            # ── Parser le content du formulaire ──────────────────
+            content = t.get("content") or ""
+            parsed = _form_parser.parse(content)
+
+            # Projet → depuis le content (formulaire GLPI Forms)
+            # Fallback → projects_id si le champ natif est rempli
+            if parsed.projet:
+                t["_project_name"] = parsed.projet
+            else:
+                pid = t.get("projects_id") or 0
+                if pid:
+                    t["_project_name"] = f"Projet #{pid}"
+                else:
+                    t["_project_name"] = "Sans projet"
+
+            # Service demandeur → depuis le content
+            t["_service"] = parsed.service or "Non renseigné"
+
+            # Lieu de livraison
+            t["_lieu"] = parsed.lieu or ""
+
+            # Bénéficiaire
+            t["_beneficiaire"] = parsed.beneficiaire or ""
+
+            # Urgence réelle depuis formulaire (si renseignée),
+            # sinon on garde urgency du ticket GLPI
+            if parsed.urgence_int:
+                t["_urgence_int"] = parsed.urgence_int
+            else:
+                t["_urgence_int"] = t.get("urgency") or t.get("priority") or 3
+
+            # Acheteur → utilisateur assigné ou demandeur
             uid = t.get("users_id_assign") or t.get("users_id_requester") or 0
             t["_buyer_name"] = users.get(uid, f"User #{uid}")
 
@@ -51,6 +92,10 @@ class TicketRepository:
 
     # ── Filtre achat ──────────────────────────────────────────────
     def _is_purchase(self, ticket: dict) -> bool:
+        """
+        Détecte si un ticket est une demande d'achat.
+        Priorité : catégorie GLPI configurée → mots-clés dans le nom.
+        """
         if self._settings.use_mock_data:
             return True
         cat_id = self._settings.glpi_purchase_category_id
@@ -89,7 +134,13 @@ class TicketRepository:
         if self._settings.use_mock_data:
             tickets = generate_mock_tickets()
         else:
-            params: dict[str, Any] = {"is_deleted": 0, "sort": "date", "order": "ASC"}
+            # Récupérer les tickets avec le content pour pouvoir parser le formulaire
+            params: dict[str, Any] = {
+                "is_deleted": 0,
+                "sort": "date",
+                "order": "ASC",
+                "expand_dropdowns": 1,
+            }
             cat = self._settings.glpi_purchase_category_id
             if cat:
                 params["searchText[itilcategories_id]"] = cat
@@ -106,7 +157,7 @@ class TicketRepository:
     ) -> list[dict]:
         if self._settings.use_mock_data:
             return []
-        params: dict[str, Any] = {"is_deleted": 1}
+        params: dict[str, Any] = {"is_deleted": 1, "expand_dropdowns": 1}
         cat = self._settings.glpi_purchase_category_id
         if cat:
             params["searchText[itilcategories_id]"] = cat
@@ -128,6 +179,10 @@ class TicketRepository:
         return users
 
     def get_projects(self) -> dict[int, str]:
+        """
+        En mode formulaire GLPI Forms, les projets sont dans le content.
+        Cette méthode reste utile pour la liste des projets disponibles.
+        """
         if self._settings.use_mock_data or not self._client:
             return {}
         projects = {}
