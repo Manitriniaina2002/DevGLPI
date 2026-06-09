@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 from functools import lru_cache
 
 from dotenv import load_dotenv
@@ -31,6 +32,10 @@ class Settings(BaseSettings):
 
     # ── CORS ───────────────────────────────────────────────────────
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+    # ── Sécurité JWT ───────────────────────────────────────────────
+    # Générez une valeur forte en prod : python -c "import secrets; print(secrets.token_hex(32))"
+    jwt_secret: str = "change-me-in-production-use-a-long-random-secret"
 
     # ── Timezone ───────────────────────────────────────────────────
     tz: str = "Indian/Antananarivo"

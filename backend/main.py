@@ -13,7 +13,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import get_settings
-from api.routes import metrics, tickets, referentiels, dashboard, export
+from api.routes import metrics, tickets, referentiels, dashboard, export, auth
 
 # ── Logging ───────────────────────────────────────────────────────
 logging.basicConfig(
@@ -28,10 +28,12 @@ settings = get_settings()
 
 app = FastAPI(
     title="Dashboard Achat GLPI",
-    version="4.0.0",
+    version="5.0.0",
     description=(
         "API analytique pour le suivi des demandes d'achat GLPI. "
-        "USE_MOCK_DATA=true → données simulées | false → API GLPI réelle."
+        "USE_MOCK_DATA=true → données simulées | false → API GLPI réelle.\n\n"
+        "**Authentification :** POST /api/auth/login → JWT Bearer.\n"
+        "En mode mock, comptes de test : responsable/demo · acheteur/demo · demandeur/demo"
     ),
 )
 
@@ -44,6 +46,7 @@ app.add_middleware(
 )
 
 # ── Routers ───────────────────────────────────────────────────────
+app.include_router(auth.router)
 app.include_router(metrics.router)
 app.include_router(tickets.router)
 app.include_router(referentiels.router)
@@ -95,9 +98,10 @@ def health():
             "error": glpi_error,
         },
         "auth": {
-            "method": "User-Token + App-Token",
+            "method": "JWT Bearer (login via GLPI Basic Auth)",
             "app_token_set": bool(cfg.glpi_app_token),
             "user_token_set": bool(cfg.glpi_user_token),
+            "jwt_secret_set": cfg.jwt_secret != "change-me-in-production-use-a-long-random-secret",
         },
     }
 

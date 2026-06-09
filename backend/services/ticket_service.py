@@ -67,6 +67,7 @@ class TicketService:
         projet: Optional[str] = None,
         acheteur: Optional[str] = None,
         status: Optional[int] = None,
+        priority: Optional[int] = None,
         urgent_only: bool = False,
         late_only: bool = False,
     ) -> list[dict]:
@@ -84,6 +85,8 @@ class TicketService:
             ]
         if status is not None:
             result = [t for t in result if t.get("status") == status]
+        if priority is not None:
+            result = [t for t in result if t.get("priority") == priority]
         if urgent_only:
             result = [
                 t for t in result
@@ -121,6 +124,7 @@ class TicketService:
         projet: Optional[str] = None,
         acheteur: Optional[str] = None,
         status: Optional[int] = None,
+        priority: Optional[int] = None,
         urgent_only: bool = False,
         late_only: bool = False,
         offset: int = 0,
@@ -131,6 +135,7 @@ class TicketService:
             projet=projet,
             acheteur=acheteur,
             status=status,
+            priority=priority,
             urgent_only=urgent_only,
             late_only=late_only,
         )
