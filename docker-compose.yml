@@ -20,9 +20,10 @@ services:
   backend:
     build:
       context: ./backend
+    image: dashbord-achat-backend
     container_name: dashbord-achat-backend
     ports:
-      - "8000:8000"
+      - "9000:8000"
     environment:
       USE_MOCK_DATA: "${USE_MOCK_DATA:-false}"
       CORS_ORIGINS: "${CORS_ORIGINS:-[\"http://localhost:3000\",\"http://127.0.0.1:3000\"]}"
