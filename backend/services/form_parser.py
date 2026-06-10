@@ -1,20 +1,16 @@
 """
 services/form_parser.py — Parseur du contenu HTML généré par GLPI Forms
 ========================================================================
-Le formulaire "DEMANDE D'ACHAT" génère automatiquement le contenu du ticket
-avec toutes les réponses. Ce module extrait les valeurs depuis ce contenu.
+Le formulaire "DEMANDE D'ACHAT" génère automatiquement le contenu du ticket.
 
-Structure typique du content GLPI Forms (HTML auto-généré) :
-  <p><strong>Projet</strong> : M004 -- Informatique (IT)</p>
-  <p><strong>A valider par</strong> : Groupe Finance</p>
-  <p><strong>Objet</strong> : Achat PC portable</p>
-  <p><strong>Description détaillée du besoin</strong> : ...</p>
-  <p><strong>Bénéficiaire de l'achat</strong> : Dupont Jean</p>
-  <p><strong>Lieu de livraison souhaité</strong> : DN MAHAMASINA</p>
-  <p><strong>Date de livraison souhaitée</strong> : 2026-07-01</p>
-
-Mapping urgence texte → int GLPI :
-  Très basse → 1, Basse → 2, Moyenne → 3, Haute → 4, Très haute → 5
+Format réel GLPI Forms (balise <b> avec préfixe numéroté) :
+  <b>1) Projet</b>: M001  --  DN & Administration
+  <b>2) A valider par</b>: ANDRIANAIVONAMBININA Abel
+  <b>3) Objet</b>: Achat PC portable
+  <b>5) Description détaillée du besoin</b>: ...
+  <b>6) Bénéficiaire de l'achat</b>: RAZAFINDRAVONY Annitah
+  <b>7) Lieu de livraison souhaité (optionnel)</b>: DN MAHAMASINA
+  <b>8) Date de livraison souhaité (optionnel)</b>: 2026-06-29
 """
 from __future__ import annotations
 
@@ -34,9 +30,9 @@ URGENCE_MAP: dict[str, int] = {
     "tres haute": 5,
 }
 
-# ── Mapping projet label → nom court ─────────────────────────────
-# Extrait le code projet depuis "M004  --  Informatique (IT)" → "M004 -- Informatique (IT)"
+
 def _normalize_projet(raw: str) -> str:
+    """Normalise les espaces multiples : 'M001  --  DN' → 'M001 -- DN'"""
     return re.sub(r"\s{2,}", " ", raw.strip())
 
 
@@ -50,20 +46,40 @@ def _strip_html(text: str) -> str:
 def _extract_field(content: str, label: str) -> Optional[str]:
     """
     Extrait la valeur d'un champ depuis le contenu HTML GLPI Forms.
-    Cherche : <strong>label</strong> : valeur
-    ou        label : valeur  (texte brut)
+
+    Supporte les formats :
+      <b>N) Label</b>: valeur          ← format réel GLPI Forms
+      <b>Label</b>: valeur             ← variante sans numéro
+      <strong>Label</strong> : valeur  ← ancien format
+      Label : valeur                   ← texte brut
     """
     if not content:
         return None
 
-    # Pattern HTML : <strong>Projet</strong> : M004...
-    pattern_html = rf"<strong>\s*{re.escape(label)}\s*</strong>\s*:?\s*([^<\n]+)"
-    m = re.search(pattern_html, content, re.IGNORECASE)
+    escaped = re.escape(label)
+
+    # Format réel GLPI Forms : <b>N) Projet</b>: valeur
+    # Le label peut contenir des caractères accentués encodés (é→??)
+    # On cherche avec le numéro optionnel et un match insensible à la casse
+    pattern_b_numbered = rf"<b>\s*\d+\)\s*{escaped}[^<]*</b>\s*:?\s*([^<\n]+)"
+    m = re.search(pattern_b_numbered, content, re.IGNORECASE)
     if m:
         return _strip_html(m.group(1)).strip(" :")
 
-    # Pattern texte brut : Projet : M004...
-    pattern_text = rf"{re.escape(label)}\s*:\s*([^\n<]+)"
+    # Format <b> sans numéro
+    pattern_b = rf"<b>\s*{escaped}[^<]*</b>\s*:?\s*([^<\n]+)"
+    m = re.search(pattern_b, content, re.IGNORECASE)
+    if m:
+        return _strip_html(m.group(1)).strip(" :")
+
+    # Format <strong> (ancien)
+    pattern_strong = rf"<strong>\s*{escaped}[^<]*</strong>\s*:?\s*([^<\n]+)"
+    m = re.search(pattern_strong, content, re.IGNORECASE)
+    if m:
+        return _strip_html(m.group(1)).strip(" :")
+
+    # Texte brut
+    pattern_text = rf"{escaped}\s*:\s*([^\n<]+)"
     m = re.search(pattern_text, content, re.IGNORECASE)
     if m:
         return _strip_html(m.group(1)).strip()
@@ -74,13 +90,12 @@ def _extract_field(content: str, label: str) -> Optional[str]:
 class FormParser:
     """
     Extrait les champs du formulaire GLPI depuis le contenu HTML d'un ticket.
-    
+
     Usage :
         parser = FormParser()
         result = parser.parse(ticket["content"])
         ticket["_project_name"] = result.projet or "Sans projet"
-        ticket["_service"]      = result.service or "Non renseigné"
-        ticket["_urgence_int"]  = result.urgence_int or ticket.get("urgency", 3)
+        ticket["_beneficiaire"] = result.beneficiaire or ""
     """
 
     def parse(self, content: str) -> "ParsedForm":
@@ -88,14 +103,28 @@ class FormParser:
             return ParsedForm()
 
         projet  = _extract_field(content, "Projet")
-        service = _extract_field(content, "Service demandeur")
-        lieu    = _extract_field(content, "Lieu de livraison souhait")
-        date_l  = _extract_field(content, "Date de livraison souhait")
-        benef   = _extract_field(content, "Bénéficiaire de l'achat") or \
-                  _extract_field(content, "Beneficiaire de l'achat")
-        desc    = _extract_field(content, "Description détaillée du besoin") or \
-                  _extract_field(content, "Description detaillee du besoin")
+        lieu    = (
+            _extract_field(content, "Lieu de livraison souhait")
+            or _extract_field(content, "Lieu de livraison")
+        )
+        date_l  = (
+            _extract_field(content, "Date de livraison souhait")
+            or _extract_field(content, "Date de livraison")
+        )
+        benef   = (
+            _extract_field(content, "B")  # Bénéficiaire encodé parfois en B??n??ficiaire
+            or _extract_field(content, "Beneficiaire de l'achat")
+            or _extract_field(content, "Bénéficiaire de l'achat")
+        )
+        # Chercher bénéficiaire par position (champ 6)
+        if not benef:
+            m = re.search(r"<b>\s*6\)[^<]*</b>\s*:?\s*([^<\n]+)", content, re.IGNORECASE)
+            if m:
+                benef = _strip_html(m.group(1)).strip(" :")
+
+        desc    = _extract_description(content)
         valider = _extract_field(content, "A valider par")
+        service = _extract_field(content, "Service demandeur")
 
         # Urgence : champ futur si ajouté au formulaire
         urgence_raw = _extract_field(content, "Urgence")
@@ -141,7 +170,23 @@ class ParsedForm:
 
     def __repr__(self):
         return (
-            f"ParsedForm(projet={self.projet!r}, service={self.service!r}, "
-            f"urgence={self.urgence_raw!r}({self.urgence_int}), "
-            f"lieu={self.lieu!r}, benef={self.beneficiaire!r})"
+            f"ParsedForm(projet={self.projet!r}, a_valider={self.a_valider!r}, "
+            f"lieu={self.lieu!r}, benef={self.beneficiaire!r}, "
+            f"urgence={self.urgence_raw!r}({self.urgence_int}))"
         )
+
+
+def _extract_description(content: str) -> Optional[str]:
+    """
+    Extraction spéciale pour la description qui peut contenir des balises <p> imbriquées.
+    Capture tout le contenu entre le champ description et le champ suivant.
+    """
+    pattern = r"<b>\s*\d+\)\s*[^<]*[Dd]escription[^<]*</b>\s*:?\s*(.*?)(?=<b>|$)"
+    m = re.search(pattern, content, re.IGNORECASE | re.DOTALL)
+    if m:
+        raw = m.group(1)
+        clean = re.sub(r"<[^>]+>", " ", raw)
+        clean = html.unescape(clean)
+        clean = re.sub(r"\s+", " ", clean).strip(" :")
+        return clean if clean else None
+    return None
