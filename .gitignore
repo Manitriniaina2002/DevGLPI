@@ -69,3 +69,13 @@ storage/mysql/
 
 # Logs
 *.log
+# GLPI sessions
+storage/glpi/_sessions/
+storage/glpi/files/
+storage/glpi/log/
+storage/glpi/dump/
+storage/glpi/tmp/
+
+# MySQL data (deja present mais on complete)
+storage/mysql/
+storage/mysql-backup/

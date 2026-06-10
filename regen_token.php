@@ -1,4 +1,4 @@
-<?php
+﻿<?php
 define("GLPI_CONFIG_DIR", "/var/glpi/config");
 chdir("/var/www/glpi");
 
@@ -8,7 +8,7 @@ $glpikey = new \GLPIKey();
 $raw_token = bin2hex(random_bytes(20));
 $encrypted = $glpikey->encrypt($raw_token);
 
-$mysqli = new mysqli("glpi-local-db", "glpi", "glpi", "glpi", 3306);
+$mysqli = new mysqli("base", "glpi", "glpi", "glpi", 3306);
 if ($mysqli->connect_error) {
     die("Connection failed: " . $mysqli->connect_error . PHP_EOL);
 }
@@ -20,3 +20,4 @@ $stmt->close();
 $mysqli->close();
 
 echo "NEW_APP_TOKEN=" . $raw_token . PHP_EOL;
+

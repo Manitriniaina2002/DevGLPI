@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 #  test_all.ps1 - Tests complets Dashboard Achat GLPI v5.0.0
 #  Usage : .\test_all.ps1
 #          .\test_all.ps1 -Base "https://xxx.trycloudflare.com"
@@ -11,7 +11,7 @@ $ok   = 0
 $fail = 0
 $warn = 0
 
-# ── Helpers ──────────────────────────────────────────────────
+# â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 function Test-Endpoint {
     param($method, $url, $desc, $headers = @{}, $body = $null, $expectCode = 200)
     try {
@@ -54,12 +54,12 @@ Write-Host ""
 Write-Host "  Dashboard Achat GLPI v5.0.0 - Test Suite" -ForegroundColor White
 Write-Host "  Base URL : $Base" -ForegroundColor Gray
 
-# ── 1. Systeme ───────────────────────────────────────────────
+# â”€â”€ 1. Systeme â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 Section "1. SYSTEME"
 Test-Endpoint GET "$Base/health"     "GET /health"
 Test-Endpoint GET "$Base/api/config" "GET /api/config"
 
-# ── 2. Authentification ──────────────────────────────────────
+# â”€â”€ 2. Authentification â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 Section "2. AUTHENTIFICATION"
 
 $loginResp = Test-Endpoint POST "$Base/api/auth/login" `
@@ -92,7 +92,7 @@ Test-Endpoint GET  "$Base/api/auth/me"     "GET  /api/auth/me (demandeur)"      
 Test-Endpoint GET  "$Base/api/auth/me"     "GET  /api/auth/me (sans token - 401)"  -expectCode 401
 Test-Endpoint POST "$Base/api/auth/logout" "POST /api/auth/logout"                 -headers $authResp
 
-# ── 3. Metriques ─────────────────────────────────────────────
+# â”€â”€ 3. Metriques â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 Section "3. METRIQUES"
 
 foreach ($dim in @("global", "acheteur", "projet")) {
@@ -111,14 +111,14 @@ Test-Endpoint GET "$Base/api/metrics/evolution?dimension=global&year=2026" `
 Test-Endpoint GET "$Base/api/metrics/taux-retard?dimension=acheteur&date_from=2025-01-01" `
     "GET /taux-retard acheteur date_from"
 
-# ── 4. Dashboard ─────────────────────────────────────────────
+# â”€â”€ 4. Dashboard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 Section "4. DASHBOARD"
 Test-Endpoint GET "$Base/api/dashboard/summary"                                           "GET /dashboard/summary"
 Test-Endpoint GET "$Base/api/dashboard/summary?year=2026"                                 "GET /dashboard/summary year=2026"
 Test-Endpoint GET "$Base/api/dashboard/summary?date_from=2026-01-01&date_to=2026-06-30"  "GET /dashboard/summary S1 2026"
 Test-Endpoint GET "$Base/api/dashboard/summary?date_from=2025-01-01&date_to=2025-12-31"  "GET /dashboard/summary annee 2025"
 
-# ── 5. Tickets sans auth ─────────────────────────────────────
+# â”€â”€ 5. Tickets sans auth â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 Section "5. TICKETS (sans authentification)"
 Test-Endpoint GET "$Base/api/tickets"                     "GET /tickets (sans auth)"
 Test-Endpoint GET "$Base/api/tickets?limit=5"             "GET /tickets limit=5"
@@ -132,21 +132,21 @@ Test-Endpoint GET "$Base/api/tickets?priority=4"          "GET /tickets priority
 Test-Endpoint GET "$Base/api/tickets?priority=5"          "GET /tickets priority=5 (Tres haute)"
 Test-Endpoint GET "$Base/api/tickets?late_only=true"      "GET /tickets late_only=true"
 Test-Endpoint GET "$Base/api/tickets/alerts"              "GET /tickets/alerts"
-Test-Endpoint GET "$Base/api/tickets/1"                   "GET /tickets/1 (detail)"
+Test-Endpoint GET "$Base/api/tickets/26"                   "GET /tickets/1 (detail)"
 Test-Endpoint GET "$Base/api/tickets/999"                 "GET /tickets/999 (inexistant - 404)" -expectCode 404
 
-# ── 6. Tickets avec auth par role ────────────────────────────
+# â”€â”€ 6. Tickets avec auth par role â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 Section "6. TICKETS (filtrage par role JWT)"
 Test-Endpoint GET "$Base/api/tickets?limit=10" "GET /tickets (responsable - voit tout)"  -headers $authResp
 Test-Endpoint GET "$Base/api/tickets?limit=10" "GET /tickets (acheteur - ses assignes)"  -headers $authAch
 Test-Endpoint GET "$Base/api/tickets?limit=10" "GET /tickets (demandeur - ses demandes)" -headers $authDem
-Test-Endpoint GET "$Base/api/tickets/1"        "GET /tickets/1 (responsable JWT)"        -headers $authResp
+Test-Endpoint GET "$Base/api/tickets/26"        "GET /tickets/1 (responsable JWT)"        -headers $authResp
 Test-Endpoint GET "$Base/api/tickets/alerts"   "GET /tickets/alerts (responsable JWT)"   -headers $authResp
 Test-Endpoint GET "$Base/api/tickets?status=5&limit=5"        "GET /tickets status=5 + auth"     -headers $authResp
 Test-Endpoint GET "$Base/api/tickets?urgent_only=true&limit=5" "GET /tickets urgents + auth"      -headers $authResp
 Test-Endpoint GET "$Base/api/tickets?priority=4&limit=5"      "GET /tickets priority=4 + auth"   -headers $authResp
 
-# ── 7. Referentiels ──────────────────────────────────────────
+# â”€â”€ 7. Referentiels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 Section "7. REFERENTIELS"
 Test-Endpoint GET "$Base/api/referentiels/acheteurs"     "GET /referentiels/acheteurs"
 Test-Endpoint GET "$Base/api/referentiels/acheteurs/all" "GET /referentiels/acheteurs/all"
@@ -156,7 +156,7 @@ Test-Endpoint GET "$Base/api/referentiels/statuts"       "GET /referentiels/stat
 Test-Endpoint GET "$Base/api/referentiels/categories"    "GET /referentiels/categories"
 Test-Endpoint GET "$Base/api/referentiels/priorites"     "GET /referentiels/priorites"
 
-# ── 8. Export Excel ──────────────────────────────────────────
+# â”€â”€ 8. Export Excel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 Section "8. EXPORT EXCEL"
 try {
     $resp = Invoke-WebRequest "$Base/api/export/excel" -UseBasicParsing
@@ -183,7 +183,7 @@ try {
     $global:fail++
 }
 
-# ── Resume ────────────────────────────────────────────────────
+# â”€â”€ Resume â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 $total = $ok + $fail + $warn
 Write-Host ""
 Write-Host ("=" * 60) -ForegroundColor Cyan
@@ -191,3 +191,9 @@ $color = if ($fail -eq 0) { "Green" } else { "Yellow" }
 Write-Host "  RESULTATS : $ok OK  /  $fail ERREURS  /  $warn WARNINGS  /  $total TOTAL" -ForegroundColor $color
 Write-Host ("=" * 60) -ForegroundColor Cyan
 Write-Host ""
+
+
+
+
+
+

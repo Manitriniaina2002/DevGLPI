@@ -1,5 +1,5 @@
-$appToken  = "vkX3Fgp0HHCf3o4h9QNZwOu6CmEYhl0MI0yoNZ9h"
-$userToken = "2PctZhtCg34JubcyaGhtb1aGFyahGQFwZhwgaIAV"
+﻿$appToken  = "3eb0995b74d348d50ac331233bc89a6dcd7aee58"
+$userToken = "If5wJsBe9skoudqYR3oJ8XO4UOll8h5VUDZzNSx0"
 
 $headers = @{
     "App-Token"     = $appToken
@@ -15,7 +15,7 @@ $headers2 = @{
     "Content-Type"  = "application/json"
 }
 
-# Profils à créer
+# Profils Ã  crÃ©er
 # interface : "central" (technicien/admin) ou "helpdesk" (self-service)
 $profiles = @(
     @{ name="Demande Achat"; interface="helpdesk"; is_default=1 },
@@ -41,7 +41,7 @@ foreach ($profile in $profiles) {
     }
 }
 
-# Vérification : lister tous les profils
+# VÃ©rification : lister tous les profils
 Write-Host "`n=== Profils existants ===" -ForegroundColor Cyan
 $existing = Invoke-RestMethod "http://localhost:1080/apirest.php/Profile?range=0-30" -Headers $headers2
 $existing | ForEach-Object {
@@ -50,3 +50,8 @@ $existing | ForEach-Object {
 
 Invoke-RestMethod "http://localhost:1080/apirest.php/killSession" -Headers $headers2 | Out-Null
 Write-Host "`nTermine." -ForegroundColor Cyan
+
+
+
+
+

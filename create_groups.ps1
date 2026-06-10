@@ -1,5 +1,5 @@
-$appToken  = "vkX3Fgp0HHCf3o4h9QNZwOu6CmEYhl0MI0yoNZ9h"
-$userToken = "2PctZhtCg34JubcyaGhtb1aGFyahGQFwZhwgaIAV"
+﻿$appToken  = "3eb0995b74d348d50ac331233bc89a6dcd7aee58"
+$userToken = "If5wJsBe9skoudqYR3oJ8XO4UOll8h5VUDZzNSx0"
 
 $glpiUrl = "http://localhost:1080/apirest.php"
 
@@ -22,7 +22,7 @@ $headers2 = @{
 }
 
 # ==========================================
-# Recherche de l'entité ACHAT
+# Recherche de l'entitÃ© ACHAT
 # ==========================================
 $entities = Invoke-RestMethod "$glpiUrl/Entity?range=0-999" -Headers $headers2
 
@@ -31,16 +31,16 @@ $entity = $entities | Where-Object {
 }
 
 if (-not $entity) {
-    Write-Host "Entité 'Root (ADES) > ACHAT' introuvable." -ForegroundColor Red
+    Write-Host "EntitÃ© 'Root (ADES) > ACHAT' introuvable." -ForegroundColor Red
     exit
 }
 
 $entityId = $entity.id
 
-Write-Host "Entité trouvée : $($entity.completename) (ID=$entityId)" -ForegroundColor Green
+Write-Host "EntitÃ© trouvÃ©e : $($entity.completename) (ID=$entityId)" -ForegroundColor Green
 
 # ==========================================
-# Groupes à créer
+# Groupes Ã  crÃ©er
 # ==========================================
 $groupsToCreate = @(
     "Co2 & Direction",
@@ -73,9 +73,9 @@ $existingGroups | ForEach-Object {
 }
 
 # ==========================================
-# Création des groupes manquants
+# CrÃ©ation des groupes manquants
 # ==========================================
-Write-Host "`nCréation des groupes..." -ForegroundColor Cyan
+Write-Host "`nCrÃ©ation des groupes..." -ForegroundColor Cyan
 
 foreach ($groupName in $groupsToCreate) {
 
@@ -99,7 +99,7 @@ foreach ($groupName in $groupsToCreate) {
             -Headers $headers2 `
             -Body $body
 
-        Write-Host "[CRÉÉ] $groupName (ID=$($result.id))" -ForegroundColor Green
+        Write-Host "[CRÃ‰Ã‰] $groupName (ID=$($result.id))" -ForegroundColor Green
     }
     catch {
         Write-Host "[ERREUR] $groupName" -ForegroundColor Red
@@ -108,7 +108,7 @@ foreach ($groupName in $groupsToCreate) {
 }
 
 # ==========================================
-# Vérification finale
+# VÃ©rification finale
 # ==========================================
 Write-Host "`n===== GROUPES ACHAT =====" -ForegroundColor Cyan
 
@@ -122,8 +122,12 @@ $groups |
     }
 
 # ==========================================
-# Déconnexion
+# DÃ©connexion
 # ==========================================
 Invoke-RestMethod "$glpiUrl/killSession" -Headers $headers2 | Out-Null
 
-Write-Host "`nTerminé." -ForegroundColor Cyan
+Write-Host "`nTerminÃ©." -ForegroundColor Cyan
+
+
+
+
