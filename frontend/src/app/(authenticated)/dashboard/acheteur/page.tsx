@@ -4,6 +4,8 @@ import { useState, type ChangeEvent, type DragEvent } from 'react'
 import Link from 'next/link'
 import { AlertCircle, CheckCircle2, FileText, UploadCloud } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card'
+import { useTickets } from '@/app/hooks/useTickets'
+
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -825,7 +827,16 @@ function TicketModal({
 // ─── Page principale ──────────────────────────────────────────────────────────
 
 export default function DashboardAcheteurPage() {
-  const [tickets, setTickets] = useState<Ticket[]>(INITIAL_TICKETS)
+  const { summary, loading, error } = useTickets({ per_page: 100 })
+
+  const apiTickets = (summary as any)?.tickets as Ticket[] | undefined
+  const apiTicketsLoaded = Boolean(apiTickets && Array.isArray(apiTickets) && apiTickets.length >= 0)
+
+  const [tickets, setTickets] = useState<Ticket[]>(apiTickets && Array.isArray(apiTickets) ? apiTickets : INITIAL_TICKETS)
+  
+
+
+
   const [selectedProject, setSelectedProject] = useState('Tous les projets')
   const [selectedStatus, setSelectedStatus] = useState<string>('tous')
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
