@@ -1,0 +1,175 @@
+@import '../styles/fonts.css';
+@import '../styles/tailwind.css';
+@import '../styles/theme.css';
+
+:root {
+  --ades-green: #4c8b40;
+  --ades-yellow: #fdce0d;
+  --ades-surface: #f9faf6;
+  --ades-surface-soft: #f5f7f0;
+  --ades-border: rgba(76, 139, 64, 0.16);
+  --ades-text-muted: #55655a;
+}
+
+html {
+  height: 100%;
+  overflow: hidden;
+  scroll-behavior: smooth;
+  background: #eef3e8;
+}
+
+body {
+  height: 100%;
+  overflow: hidden;
+  margin: 0;
+  background: radial-gradient(circle at top left, rgba(76, 139, 64, 0.14), transparent 22%),
+    linear-gradient(180deg, #f7faf4 0%, #eef3e8 100%);
+  color: var(--color-text-primary);
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: rgba(76, 139, 64, 0.18);
+  color: var(--color-text-primary);
+}
+
+a {
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: none;
+}
+
+/* Remove underlines globally (override utility classes if present) */
+a,
+a:visited,
+a:hover,
+a:active,
+a:focus,
+.underline {
+  text-decoration: none !important;
+}
+
+/* Also override Tailwind utility classes that contain 'underline' (e.g. hover:underline) */
+[class*="underline"],
+[class*="underline"]:hover,
+[class*="underline"]:focus,
+[class*="underline"]:active {
+  text-decoration: none !important;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  color: var(--color-text-primary);
+}
+
+.panel-ades {
+  background: rgba(255, 255, 255, 0.85);
+  border: 1px solid rgba(76, 139, 64, 0.12);
+  border-radius: 1.5rem;
+  box-shadow: 0 24px 60px rgba(15, 23, 42, 0.08);
+  backdrop-filter: blur(12px);
+}
+
+.card-ades {
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(76, 139, 64, 0.08);
+  border-radius: 1.5rem;
+  box-shadow: 0 20px 45px rgba(15, 23, 42, 0.05);
+}
+
+.btn-ades-outline {
+  border: 1px solid var(--ades-green);
+  background: transparent;
+}
+
+.status-ades {
+  background: rgba(253, 206, 13, 0.15);
+  color: #7a6b00;
+}
+
+/* ADES utility tokens */
+.bg-ades-green {
+  background-color: var(--ades-green) !important;
+}
+
+.bg-ades-yellow {
+  background-color: var(--ades-yellow) !important;
+}
+
+.text-ades-green {
+  color: var(--ades-green) !important;
+}
+
+.text-ades-yellow {
+  color: var(--ades-yellow) !important;
+}
+
+.border-ades-green {
+  border-color: var(--ades-green) !important;
+}
+
+.border-ades-yellow {
+  border-color: var(--ades-yellow) !important;
+}
+
+/* Settings button (bottom-left) */
+.settings-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0.75rem;
+  background-color: rgba(76,139,64,0.03);
+  border: 1px solid rgba(76,139,64,0.06);
+  transition: background-color 120ms ease, transform 120ms ease, box-shadow 120ms ease;
+}
+.settings-btn:hover {
+  background-color: rgba(76,139,64,0.08);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(76,139,64,0.06);
+}
+
+/* Profile button (top-right) */
+.profile-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+  background: linear-gradient(180deg, #ffffff, #fbfdf9);
+  border: 1px solid rgba(76,139,64,0.06);
+  box-shadow: 0 6px 18px rgba(15,23,42,0.06);
+}
+.profile-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 9999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background-color: var(--ades-green);
+  color: white;
+  font-weight: 600;
+  box-shadow: 0 6px 12px rgba(76,139,64,0.12);
+}
+
+/* Ensure utility underline overrides removed */
+.profile-btn a,
+.settings-btn a {
+  text-decoration: none !important;
+}
