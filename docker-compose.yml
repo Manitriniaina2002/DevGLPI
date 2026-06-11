@@ -26,7 +26,7 @@ services:
       - "9000:8000"
     environment:
       USE_MOCK_DATA: "${USE_MOCK_DATA:-false}"
-      CORS_ORIGINS: "${CORS_ORIGINS:-[\"http://localhost:3000\",\"http://127.0.0.1:3000\"]}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-[\"http://localhost:3000\",\"http://frontend:3000\"]}"
       DATABASE_URL: postgresql://dashboard:dashboard@postgres:5432/dashboard_achat
       GLPI_BASE_URL: "${GLPI_BASE_URL:-http://nginx}"
       GLPI_APP_TOKEN: "${GLPI_APP_TOKEN:-}"
@@ -39,6 +39,34 @@ services:
       - default
       - glpi-frontend
     restart: unless-stopped
+
+  # ── Frontend Next.js ──────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Le frontend appelle le backend via le proxy Next.js (rewrites)
+        # En interne Docker, le backend est accessible sur http://backend:8000
+        NEXT_PUBLIC_API_URL: http://backend:8000
+    image: dashbord-achat-frontend
+    container_name: dashbord-achat-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # URL publique du backend (accessible depuis le navigateur)
+      # En prod, mettre l'URL publique de votre serveur
+      NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:9000}"
+      NODE_ENV: production
+    depends_on:
+      - backend
+    networks:
+      - default
+    restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   postgres_data:
