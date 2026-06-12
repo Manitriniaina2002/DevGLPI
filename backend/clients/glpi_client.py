@@ -1,6 +1,6 @@
 """
 clients/glpi_client.py — Client GLPI REST
-Gère la session, la pagination et les retry.
+Gère la session, la pagination et le retry.
 """
 from __future__ import annotations
 
@@ -114,3 +114,57 @@ class GLPIClient:
     def get_one(self, endpoint: str, item_id: int) -> dict:
         resp = self._get(f"{endpoint}/{item_id}")
         return resp.json() if resp.ok else {}
+
+    def get_ticket_followups(self, ticket_id: int, page_size: int = 500) -> list[dict]:
+        """Récupère tous les followups d'un ticket (pagination gérée).
+
+        GLPI peut refuser certains filtres de recherche. En fallback, on récupère
+        tous les followups et on filtre côté client sur tickets_id/ticket_id.
+        """
+        params_options = [
+            {"searchText[tickets_id]": ticket_id, "sort": "date", "order": "ASC"},
+            {"searchText[ticket_id]": ticket_id, "sort": "date", "order": "ASC"},
+        ]
+        for params in params_options:
+            items = self.get_all("TicketFollowup", params, page_size)
+            if items:
+                return items
+
+        items = self.get_all("TicketFollowup", {"sort": "date", "order": "ASC"}, page_size)
+        return [
+            item for item in items
+            if item.get("tickets_id") == ticket_id
+            or item.get("ticket_id") == ticket_id
+            or str(item.get("tickets_id")) == str(ticket_id)
+            or str(item.get("ticket_id")) == str(ticket_id)
+        ]
+
+    def get_ticket_changes(self, ticket_id: int, page_size: int = 500) -> list[dict]:
+        """Récupère les changements (`glpi_changes`) liés à un ticket.
+
+        Certains environnements GLPI exposent ce type via la ressource `Change`.
+        On tente d'abord une recherche par ticket, puis on filtre côté client si nécessaire.
+        """
+        params_options = [
+            {"searchText[ticket_id]": ticket_id, "sort": "date", "order": "ASC"},
+            {"searchText[tickets_id]": ticket_id, "sort": "date", "order": "ASC"},
+        ]
+        for endpoint in ("Change", "Changes"):
+            for params in params_options:
+                items = self.get_all(endpoint, params, page_size)
+                if items:
+                    return items
+
+            items = self.get_all(endpoint, {"sort": "date", "order": "ASC"}, page_size)
+            if items:
+                filtered = [
+                    item for item in items
+                    if item.get("ticket_id") == ticket_id
+                    or item.get("tickets_id") == ticket_id
+                    or str(item.get("ticket_id")) == str(ticket_id)
+                    or str(item.get("tickets_id")) == str(ticket_id)
+                ]
+                if filtered:
+                    return filtered
+
+        return []

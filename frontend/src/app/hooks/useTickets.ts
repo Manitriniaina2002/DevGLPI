@@ -58,9 +58,13 @@ export function useTickets(params: UseTicketsParams = { per_page: 100 }) {
       try {
         const url = `${API_BASE}/api/dashboard/summary${query ? `?${query}` : ''}`
 
+        const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
         const res = await fetch(url, {
           method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           credentials: 'include',
         })
 

@@ -1,11 +1,11 @@
-# TODO — Vérification login Frontend & accès par rôle
+# Integration completion checklist
 
-- [x] Identifier le mismatch : backend renvoie `role=demandeur` (log), donc l’accès `/dashboard/acheteur` est refusé.
-- [x] Renforcer RoleGuard : validation stricte du champ JWT `role` (uniquement valeurs autorisées).
-- [ ] Corriger la navigation : rediriger vers le bon dashboard quand rôle != page.
+## Plan
+- [x] Update frontend hooks to send JWT as `Authorization: Bearer <token>` (backend requires this).
+- [x] Make `dashboard/acheteur/page.tsx` use backend data read-only (no status/comments/uploads endpoints exist).
+- [ ] Make `/dashboard` redirect to the correct role route based on JWT (`demandeur|acheteur|responsable`).
+- [ ] Ensure routes for all roles exist (create `demandeur` page or adjust redirect/cards).
 
-- [ ] (Option) Basculer la page Acheteur en garde différente ou rediriger vers le bon dashboard selon rôle.
-- [ ] Nettoyer / retirer les tickets fictifs si non nécessaires.
-
-
+## Notes
+Backend does not currently expose endpoints for updating tickets/comments/attachments, so buyer UI must be read-only for now.
 

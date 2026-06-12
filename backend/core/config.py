@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     rejected_statuses: frozenset[int] = frozenset({6})
     urgent_priorities: frozenset[int] = frozenset({4, 5, 6})
     late_threshold_days: int = 5
+    glpi_history_cache_ttl_seconds: int = 300
 
     status_map: dict[int, str] = {
         1: "Nouveau",

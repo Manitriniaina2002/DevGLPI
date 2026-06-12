@@ -150,3 +150,36 @@ def get_ticket(
 
     result = svc.filter_and_paginate(match, limit=1)
     return result["tickets"][0]
+
+
+@router.get("/{ticket_id}/history")
+def ticket_history(
+    ticket_id: int,
+    limit: int = Query(100, ge=1, le=1000, description="Nombre de lignes d'historique par page"),
+    offset: int = Query(0, ge=0, description="Décalage de pagination"),
+    dates: tuple = Depends(get_date_range),
+    repo: TicketRepository = Depends(_get_repo),
+    settings: Settings = Depends(get_settings),
+    user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """
+    Retourne l'historique (followups / changements) d'un ticket si l'utilisateur y a accès.
+    """
+    df, dt = dates
+    tickets = repo.get_purchase_tickets(df, dt)
+    tickets = _apply_role_filter(tickets, user, settings)
+
+    match = [t for t in tickets if t.get("id") == ticket_id]
+
+    if not match:
+        raise HTTPException(status_code=404, detail=f"Ticket #{ticket_id} introuvable ou non accessible")
+
+    history = repo.get_ticket_history(ticket_id)
+    total = len(history)
+    page = history[offset:offset + limit]
+    return {
+        "history": page,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+    }

@@ -77,9 +77,13 @@ export function useTicketsList(params: UseTicketsListParams = {}) {
       setError(null)
       try {
         const url = `${API_BASE}/api/tickets?${query}`
+        const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
         const res = await fetch(url, {
           method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
           credentials: 'include',
         })
 

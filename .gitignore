@@ -73,3 +73,72 @@ storage/glpi/tmp/
 # MySQL data (deja present mais on complete)
 storage/mysql/
 storage/mysql-backup/
+
+# -----------------------------
+# Deployment / local ignores
+# -----------------------------
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+coverage.xml
+.coverage
+
+# Logs and temp
+*.log
+*.tmp
+*.bak
+*.swp
+
+# Node / frontend
+node_modules/
+frontend/.next/
+frontend/.vercel/
+dist/
+build/
+
+# Docker
+docker-compose.override.yml
+docker-compose.*.local.yml
+*.env.local
+
+# Local debug / generated files (not needed for deployment)
+glpi_ticket_*_*.json
+backend_tickets*.json
+debug_*.json
+api_output.json
+raw_ticket_*.json
+
+# Storage (local dumps, caches, DB files)
+/storage/**
+
+# Backups and DB dumps
+*.sql
+*.sqlite3
+*.db
+
+# Certificates / keys
+*.pem
+*.key
+oauth.pub
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# End
