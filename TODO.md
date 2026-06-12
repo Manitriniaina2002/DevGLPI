@@ -1,8 +1,11 @@
-# TODO
+# TODO — Vérification login Frontend & accès par rôle
 
-- [ ] Brancher `frontend/src/app/(authenticated)/dashboard/acheteur/page.tsx` sur `GET /api/dashboard/summary` via `useTickets` (end point Dashboard Summary)
-- [ ] Conserver la logique UI existante (filtres/liste/Modal) en remplaçant les tickets fictifs par `summary.tickets` lorsque disponible
-- [ ] Ajouter états `loading/error` et fallback sur données fictives si l’API ne renvoie pas la liste
-- [ ] Vérifier build/typecheck Next.js
-- [ ] Mettre à jour `useTickets` si l’API réelle renvoie une forme différente (tickets/summary)
+- [x] Identifier le mismatch : backend renvoie `role=demandeur` (log), donc l’accès `/dashboard/acheteur` est refusé.
+- [x] Renforcer RoleGuard : validation stricte du champ JWT `role` (uniquement valeurs autorisées).
+- [ ] Corriger la navigation : rediriger vers le bon dashboard quand rôle != page.
+
+- [ ] (Option) Basculer la page Acheteur en garde différente ou rediriger vers le bon dashboard selon rôle.
+- [ ] Nettoyer / retirer les tickets fictifs si non nécessaires.
+
+
 

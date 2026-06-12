@@ -18,6 +18,7 @@ import {
 } from 'recharts'
 
 import { useTickets } from '@/app/hooks/useTickets'
+import RoleGuard from '@/app/authenticated/role-guard'
 
 type OngletKey = 'overview' | 'acheteurs' | 'projets'
 
@@ -281,7 +282,7 @@ function SectionAcheteurs({ items }: { items: Array<{ name: string; count: numbe
         </table>
       </div>
       <p className="mt-3 text-xs text-neutral-500">
-        Note : la charge/retards/clôtures par acheteur ne sont pas renvoyés par l’endpoint de summary.
+        Note : la charge/retards/clôtures par acheteur ne sont pas renvoyés par l'endpoint de summary.
       </p>
     </div>
   )
@@ -337,6 +338,14 @@ function SectionProjets({ items }: { items: Array<{ name: string; count: number 
 }
 
 export default function DashboardResponsablePage() {
+  return (
+    <RoleGuard allowedRoles={['responsable']}>
+      <DashboardResponsableContent />
+    </RoleGuard>
+  )
+}
+
+function DashboardResponsableContent() {
   const [onglet, setOnglet] = useState<OngletKey>('overview')
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'success' | 'warning' | 'info' }>>([])
 
@@ -355,7 +364,6 @@ export default function DashboardResponsablePage() {
 
   const kpis: DashboardKpis = s?.kpis ?? {}
   const monthly = (s?.ytd?.monthly ?? []).map((m) => {
-    // L’API ne donne pas la série retards mensuelle => on distribue le total late uniformément
     const lateTotal = kpis.late ?? 0
     const retards = (s?.ytd?.monthly?.length ? Math.round(lateTotal / s.ytd.monthly.length) : 0)
     return {
@@ -391,7 +399,7 @@ export default function DashboardResponsablePage() {
   const kpiEnCours = kpis.open ?? 0
   const kpiCrees = (kpis.total_tickets ?? 0) - (kpis.resolved ?? 0)
   const kpiRetards = kpis.late ?? 0
-  const kpiNonAssignes = (topBuyers.find((b) => b.name === 'Non assigné')?.count ?? 0) // approximation
+  const kpiNonAssignes = (topBuyers.find((b) => b.name === 'Non assigné')?.count ?? 0)
   const kpiRappelsDus = 0
 
   return (
@@ -514,7 +522,7 @@ export default function DashboardResponsablePage() {
               <div className="space-y-6">
                 <SectionGraphiques pieData={pieData} weekly={weekly} monthly={monthly} />
                 <div className="rounded-2xl border border-neutral-100 bg-white p-5 text-sm text-neutral-600">
-                  Aperçu tickets / modals d’actions désactivés : l’endpoint summary ne renvoie pas la liste détaillée.
+                  Aperçu tickets / modals d'actions désactivés : l'endpoint summary ne renvoie pas la liste détaillée.
                 </div>
               </div>
             )}
@@ -527,4 +535,3 @@ export default function DashboardResponsablePage() {
     </>
   )
 }
-

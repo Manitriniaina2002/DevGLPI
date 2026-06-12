@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+
 import { Button } from '@/app/components/ui/button'
 import { Input } from '@/app/components/ui/input'
 import { Label } from '@/app/components/ui/label'
@@ -9,8 +10,8 @@ import { Alert, AlertDescription } from '@/app/components/ui/alert'
 import { AlertCircle, Loader2 } from 'lucide-react'
 
 export default function LoginPage() {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [userToken, setUserToken] = useState('')
+
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -21,10 +22,12 @@ export default function LoginPage() {
 
     try {
       // TODO: Implémenter l'appel API d'authentification
-      const response = await fetch('/api/auth/login', {
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:9000'
+      const response = await fetch(`${apiUrl}/api/auth/login`, {
+
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
+        body: JSON.stringify({ user_token: userToken }),
       })
 
       if (!response.ok) {
@@ -32,6 +35,10 @@ export default function LoginPage() {
       }
 
       // TODO: Rediriger vers le dashboard
+      const data = await response.json()
+      if (data?.access_token) {
+        localStorage.setItem('auth_token', data.access_token)
+      }
       window.location.href = '/dashboard'
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur de connexion')
@@ -59,30 +66,18 @@ export default function LoginPage() {
             )}
 
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="userToken">User token GLPI</Label>
               <Input
-                id="email"
-                type="email"
-                placeholder="vous@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                id="userToken"
+                type="text"
+                placeholder="<user_token>"
+                value={userToken}
+                onChange={(e) => setUserToken(e.target.value)}
                 required
                 disabled={isLoading}
               />
             </div>
 
-            <div className="space-y-2">
-              <Label htmlFor="password">Mot de passe</Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="••••••••"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                disabled={isLoading}
-              />
-            </div>
 
             <Button type="submit" className="w-full" disabled={isLoading}>
               {isLoading ? (

@@ -1,16 +1,18 @@
 'use client'
 
-import { useState, type ChangeEvent, type DragEvent } from 'react'
+import { useEffect, useState, type ChangeEvent, type DragEvent } from 'react'
 import Link from 'next/link'
 import { AlertCircle, CheckCircle2, FileText, UploadCloud } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card'
-import { useTickets } from '@/app/hooks/useTickets'
+import { useTicketsList } from '@/app/hooks/useTicketsList'
+
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type TicketStatus = 'créé' | 'en cours' | 'clôturé' | 'rejeté'
 type Priority = 'normal' | 'urgent'
+
 
 interface Comment {
   id: string
@@ -826,18 +828,50 @@ function TicketModal({
 
 // ─── Page principale ──────────────────────────────────────────────────────────
 
+import RoleGuard from '@/app/authenticated/role-guard'
+
 export default function DashboardAcheteurPage() {
-  const { summary, loading, error } = useTickets({ per_page: 100 })
+  return (
+    <RoleGuard allowedRoles={['acheteur']}>
+      <DashboardAcheteurContent />
+    </RoleGuard>
+  )
+}
 
-  const apiTickets = (summary as any)?.tickets as Ticket[] | undefined
-  const apiTicketsLoaded = Boolean(apiTickets && Array.isArray(apiTickets) && apiTickets.length >= 0)
+function DashboardAcheteurContent() {
+  const { tickets: apiTickets, loading, error } = useTicketsList({ per_page: 200 })
 
-  const [tickets, setTickets] = useState<Ticket[]>(apiTickets && Array.isArray(apiTickets) ? apiTickets : INITIAL_TICKETS)
+  const [tickets, setTickets] = useState<Ticket[]>([])
   
+  useEffect(() => {
+    // Map API response to the UI Ticket shape if needed.
+    setTickets(
+      apiTickets.map((t: any) => ({
+        id: String(t.id),
+        reference: String(t.reference ?? t.titre ?? ''),
+        title: String(t.title ?? t.titre ?? ''),
+        project: String(t.project ?? 'Non assigné'),
+        status: (t.statut ?? t.status ?? 'en cours') as TicketStatus,
+        priority: (t.priorite ?? t.priority ?? 'normal') as Priority,
+        assignedTo: String(t.acheteur ?? t.assignedTo ?? 'Non assigné'),
+        assignedManually: Boolean(t.assignedManually ?? false),
+        createdAt: String(t.dateCreation ?? t.createdAt ?? new Date().toISOString().split('T')[0]),
+        takenInChargeAt: (t.takenInChargeAt ?? t.datePriseEnCharge ?? null) as string | null,
+        deadline: String(t.dateEcheance ?? t.deadline ?? new Date().toISOString().split('T')[0]),
+        supplier: t.supplier ? String(t.supplier) : undefined,
+        amount: t.amount != null ? Number(t.amount) : undefined,
+        description: String(t.description ?? ''),
+        commandeRecue: Boolean(t.commandeRecue ?? false),
+        comments: (Array.isArray(t.comments) ? t.comments : []) as any,
+        attachments: (Array.isArray(t.attachments) ? t.attachments : []) as any,
+      }))
+    )
+  }, [apiTickets])
 
 
 
   const [selectedProject, setSelectedProject] = useState('Tous les projets')
+
   const [selectedStatus, setSelectedStatus] = useState<string>('tous')
   const [selectedTicket, setSelectedTicket] = useState<Ticket | null>(null)
   const [search, setSearch] = useState('')

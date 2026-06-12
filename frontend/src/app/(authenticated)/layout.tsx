@@ -91,10 +91,10 @@ export default function AuthenticatedLayout({ children }: { children: ReactNode 
                 <p className="mt-1 text-sm text-neutral-600">Pilotez vos tickets avec un tableau de bord moderne</p>
               </div>
                 <div className="flex items-center gap-3">
-                <Link
-                  href="/settings"
-                  className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-neutral-900 shadow-sm transition hover:border-ades-green hover:bg-ades-green/10"
-                >
+              <Link
+                href="/settings"
+                className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-neutral-900 shadow-sm transition hover:border-ades-green hover:bg-ades-green/10"
+              >
                   <User className="w-4 h-4 text-ades-green" />
                   {/* <span>Mon Profil</span> */}
                 </Link>

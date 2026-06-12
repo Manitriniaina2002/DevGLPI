@@ -58,20 +58,14 @@ Thumbs.db
 *.mov
 *.wmv
 
-# GLPI cache
-storage/glpi/files/_cache/
-
-# MySQL data
-storage/mysql/
-
 # Socket files
 *.sock
 
 # Logs
 *.log
-# GLPI sessions
-storage/glpi/_sessions/
-storage/glpi/files/
+# GLPI
+storage/glpi/files/_sessions/
+storage/glpi/files/_cache/
 storage/glpi/log/
 storage/glpi/dump/
 storage/glpi/tmp/

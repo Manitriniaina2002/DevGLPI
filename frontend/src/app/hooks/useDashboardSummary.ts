@@ -2,42 +2,41 @@
 
 import { useEffect, useMemo, useState } from 'react'
 
-export type TicketStatusRaw = string
-
-export interface Ticket {
-  id: string
-  titre: string
-  description?: string
-  acheteur?: string | null
-  projet?: string
-  statut?: TicketStatusRaw
-  priorite?: string
-  dateCreation?: string
-  dateEcheance?: string
-  enRetard?: boolean
-  joursSansAction?: number
-
-  [key: string]: unknown
-}
-
 export type DashboardSummary = {
+  period?: { from?: string | null; to?: string | null }
+  mode?: string
+  kpis?: {
+    total_tickets?: number
+    resolved?: number
+    open?: number
+    late?: number
+    urgent?: number
+    rejected?: number
+    taux_realisation_pct?: number
+    taux_retard_pct?: number
+    taux_rejet_pct?: number
+    taux_urgence_pct?: number
+    delai_moyen_jours?: number
+  }
+  ytd?: {
+    year?: number
+    monthly?: Array<{ month: string; received: number; resolved: number }>
+  }
+  top_buyers?: Array<{ name: string; count: number }>
+  top_projects?: Array<{ name: string; count: number }>
+
   [key: string]: unknown
 }
 
-type UseTicketsParams = {
-  per_page?: number
+type UseDashboardSummaryParams = {
   year?: number
-  from?: string
-  to?: string
 }
 
-// Next.js: l'API backend tourne à http://localhost:9000
 const API_BASE = 'http://localhost:9000'
 
-export function useTickets(params: UseTicketsParams = { per_page: 100 }) {
+export function useDashboardSummary(params: UseDashboardSummaryParams = {}) {
   const { year } = params
 
-  const [tickets, setTickets] = useState<Ticket[]>([])
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -57,7 +56,6 @@ export function useTickets(params: UseTicketsParams = { per_page: 100 }) {
 
       try {
         const url = `${API_BASE}/api/dashboard/summary${query ? `?${query}` : ''}`
-
         const res = await fetch(url, {
           method: 'GET',
           headers: { 'Content-Type': 'application/json' },
@@ -66,18 +64,11 @@ export function useTickets(params: UseTicketsParams = { per_page: 100 }) {
 
         if (!res.ok) throw new Error(`HTTP ${res.status} - ${await res.text()}`)
 
-        const data = (await res.json()) as any
-
-        if (!cancelled) {
-          // En mode option B : /api/dashboard/summary ne sert qu'à fournir les KPI
-          // On ne dépend plus d'un éventuel data.tickets.
-          setTickets([])
-          setSummary((data as DashboardSummary) || null)
-        }
+        const data = (await res.json()) as DashboardSummary
+        if (!cancelled) setSummary(data)
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : String(e))
-          setTickets([])
           setSummary(null)
         }
       } finally {
@@ -91,7 +82,6 @@ export function useTickets(params: UseTicketsParams = { per_page: 100 }) {
     }
   }, [query])
 
-  return { tickets, summary, loading, error }
+  return { summary, loading, error }
 }
-
 
