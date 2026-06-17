@@ -19,3 +19,12 @@
 .redirectapp-button:hover {
   background: #4f7e1c;
 }
+
+.redirectapp-button-near-tabs {
+  position: relative;
+  display: inline-flex;
+  margin-left: 0.75rem;
+  margin-top: 0.2rem;
+  float: right;
+  box-shadow: none;
+}

@@ -19,7 +19,7 @@
     button.href = buttonUrl;
     button.target = '_blank';
     button.rel = 'noreferrer noopener';
-    button.textContent = 'Ouvrir l\'application';
+    button.textContent = 'Voir Rapport détaillé';
 
     document.body.appendChild(button);
   }

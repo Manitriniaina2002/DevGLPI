@@ -5,12 +5,40 @@
   var buttonClass = 'redirectapp-button';
   var buttonUrl = 'http://localhost:3000/';
 
+  function getTabsContainer() {
+    var selectors = [
+      '#tabs',
+      '.ui-tabs-nav',
+      '.tabs',
+      '.nav-tabs',
+      '.glpi_tabs',
+      '.tab_bar',
+      '.tabbar',
+      '.tabs-container',
+      '#content .ui-tabs-nav',
+      '#content .tabs',
+      '#content .nav-tabs'
+    ];
+    for (var i = 0; i < selectors.length; i++) {
+      var el = document.querySelector(selectors[i]);
+      if (el) {
+        return el;
+      }
+    }
+    return null;
+  }
+
   function addRedirectButton() {
     if (document.querySelector('.' + buttonClass)) {
       return;
     }
 
     if (window.location.pathname.indexOf('login') !== -1) {
+      return;
+    }
+
+    // Only show the redirect button on the GLPI central page
+    if (window.location.pathname.indexOf('/front/central.php') === -1) {
       return;
     }
 
@@ -31,7 +59,13 @@
       }
     });
 
-    document.body.appendChild(button);
+    var tabsContainer = getTabsContainer();
+    if (tabsContainer) {
+      tabsContainer.appendChild(button);
+      button.classList.add('redirectapp-button-near-tabs');
+    } else {
+      document.body.appendChild(button);
+    }
 
     loadUserToken(button);
   }
@@ -85,7 +119,7 @@
           button.dataset.tokenReady = 'true';
           button.style.pointerEvents = '';
           button.style.opacity = '';
-          button.textContent = 'Ouvrir l\'application';
+          button.textContent = 'Voir Rapport détaillé';
           button.title = 'Ouvrir l\'application avec authentification automatique';
         } else {
           button.textContent = 'Token GLPI introuvable';
