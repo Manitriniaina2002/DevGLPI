@@ -22,11 +22,40 @@ def _month_key(d: date) -> str:
     return d.strftime("%Y-%m")
 
 
+def _ticket_project_name(ticket: dict) -> str:
+    project_name = ticket.get("_project_name") or ticket.get("projet")
+    if project_name:
+        return str(project_name)
+
+    project_value = ticket.get("project") or ticket.get("projects") or ticket.get("projects_id")
+    if isinstance(project_value, dict):
+        for key in ("name", "nom", "project_name", "projects_name"):
+            val = project_value.get(key)
+            if val:
+                return str(val)
+        project_id = project_value.get("id") or project_value.get("projects_id") or project_value.get("project_id")
+        if project_id:
+            return f"Projet #{project_id}"
+    if isinstance(project_value, int):
+        return f"Projet #{project_value}"
+    if isinstance(project_value, str) and project_value.strip():
+        cleaned = project_value.strip()
+        if cleaned.isdigit():
+            return f"Projet #{cleaned}"
+        return cleaned
+
+    return "Sans projet"
+
+
+def _ticket_buyer_name(ticket: dict) -> str:
+    return str(ticket.get("_buyer_name") or ticket.get("acheteur") or "Non assigné")
+
+
 def _group_key(ticket: dict, dimension: str) -> str:
     if dimension == "projet":
-        return str(ticket.get("_project_name") or "Sans projet")
+        return _ticket_project_name(ticket)
     if dimension == "acheteur":
-        return str(ticket.get("_buyer_name") or "Non assigné")
+        return _ticket_buyer_name(ticket)
     return "global"
 
 
@@ -283,12 +312,12 @@ class MetricsService:
 
         buyer_vol: dict[str, int] = {}
         for t in tickets:
-            b = t.get("_buyer_name", "Non assigné")
+            b = _ticket_buyer_name(t)
             buyer_vol[b] = buyer_vol.get(b, 0) + 1
 
         proj_vol: dict[str, int] = {}
         for t in tickets:
-            p = t.get("_project_name", "Sans projet")
+            p = _ticket_project_name(t)
             proj_vol[p] = proj_vol.get(p, 0) + 1
 
         monthly: dict[str, dict] = {}

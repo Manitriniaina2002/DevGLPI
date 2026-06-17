@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 import { Button } from '@/app/components/ui/button'
 import { Input } from '@/app/components/ui/input'
@@ -21,31 +21,75 @@ export default function LoginPage() {
     setError('')
 
     try {
-      // TODO: Implémenter l'appel API d'authentification
-      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:9000'
-      const response = await fetch(`${apiUrl}/api/auth/login`, {
+      await doLogin(userToken)
+    } finally {
+      setIsLoading(false)
+    }
+  }
 
+  async function doLogin(token: string) {
+    try {
+      const response = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_token: userToken }),
+        body: JSON.stringify({ user_token: token }),
       })
 
       if (!response.ok) {
         throw new Error('Identifiants invalides')
       }
 
-      // TODO: Rediriger vers le dashboard
       const data = await response.json()
       if (data?.access_token) {
         localStorage.setItem('auth_token', data.access_token)
       }
       window.location.href = '/dashboard'
+      return true
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur de connexion')
-    } finally {
-      setIsLoading(false)
+      return false
     }
   }
+
+  useEffect(() => {
+    let mounted = true
+
+    async function tryAutoAuth() {
+      setIsLoading(true)
+      setError('')
+
+      // Prefer a configured GLPI URL (useful in Docker), else try common locations
+      const glpiBase = (process.env.NEXT_PUBLIC_GLPI_URL as string) || window.location.origin || 'http://nginx'
+      const candidates = [
+        `${glpiBase}/plugins/redirectapp/front/get_user_token.php`,
+        `${glpiBase.replace(/:\d+$/, '')}:1080/plugins/redirectapp/front/get_user_token.php`,
+        'http://localhost:1080/plugins/redirectapp/front/get_user_token.php',
+      ]
+
+      for (const url of candidates) {
+        try {
+          const res = await fetch(url, { credentials: 'include' })
+          if (!res.ok) continue
+          const json = await res.json()
+          const tk = json?.token
+          if (tk) {
+            setUserToken(tk)
+            await doLogin(tk)
+            return
+          }
+        } catch (e) {
+          // ignore and try next
+        }
+      }
+
+      if (mounted) setIsLoading(false)
+    }
+
+    tryAutoAuth()
+    return () => {
+      mounted = false
+    }
+  }, [])
 
   return (
     <div className="min-h-screen bg-neutral-50 flex items-center justify-center px-4">

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<plugin>
+  <name>Redirect App</name>
+  <key>redirectapp</key>
+  <version>1.0.0</version>
+  <state>stable</state>
+  <author>DevGLPI</author>
+  <license>GPL v2+</license>
+  <description>
+    <short>Ajoute un bouton pour rediriger vers notre application externe.</short>
+    <long>Plugin GLPI local qui affiche un bouton fixe reliant à l\'application externe.</long>
+  </description>
+  <homepage></homepage>
+  <requirements>
+    <glpi>
+      <min>11.0.0</min>
+      <max>999.0.0</max>
+    </glpi>
+    <php>
+      <min>8.0.0</min>
+    </php>
+  </requirements>
+</plugin>

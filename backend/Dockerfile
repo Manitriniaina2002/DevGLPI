@@ -8,9 +8,8 @@ ENV PYTHONIOENCODING=utf-8
 ENV LANG=C.UTF-8
 
 # Dépendances système minimales
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
+# Le backend n’a pas besoin de dépendances système additionnelles pour l’exécution.
+# Nous évitons ici l’installation de curl pour réduire les dépendances réseau lors du build.
 
 # Dépendances Python
 COPY requirements.txt .

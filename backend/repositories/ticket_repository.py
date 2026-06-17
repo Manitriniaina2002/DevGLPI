@@ -39,6 +39,48 @@ def _parse_date(val: Any) -> date | None:
         return None
 
 
+def _resolve_project_id(ticket: dict) -> int:
+    candidates = (
+        "projects_id",
+        "project_id",
+        "projects",
+        "project",
+        "projects_id_assign",
+        "project_id_assigned",
+    )
+
+    def parse_value(val: Any) -> int:
+        if isinstance(val, int):
+            return val
+        if isinstance(val, str):
+            cleaned = val.strip()
+            if cleaned.isdigit():
+                return int(cleaned)
+            m = re.search(r"\d+", cleaned)
+            if m:
+                return int(m.group(0))
+        if isinstance(val, dict):
+            for nested_key in ("id", "projects_id", "project_id"):
+                nested_value = val.get(nested_key)
+                if nested_value is not None:
+                    resolved = parse_value(nested_value)
+                    if resolved:
+                        return resolved
+        if isinstance(val, (list, tuple)) and val:
+            return parse_value(val[0])
+        return 0
+
+    for key in candidates:
+        value = ticket.get(key)
+        if not value:
+            continue
+        resolved = parse_value(value)
+        if resolved:
+            return resolved
+
+    return 0
+
+
 _form_parser = FormParser()
 
 
@@ -74,6 +116,8 @@ class TicketRepository:
         # Inverse map to resolve user names (some GLPI responses return names when expand_dropdowns=1)
         name_to_uid = {v.lower(): k for k, v in users.items() if isinstance(v, str)}
 
+        project_names = self.get_projects() if self._client else {}
+
         for t in tickets:
             # ── Parser le content du formulaire ──────────────────
             content = t.get("content") or ""
@@ -83,8 +127,11 @@ class TicketRepository:
             if parsed.projet:
                 t["_project_name"] = parsed.projet
             else:
-                pid = t.get("projects_id") or 0
-                t["_project_name"] = f"Projet #{pid}" if pid else "Sans projet"
+                pid = _resolve_project_id(t)
+                if pid:
+                    t["_project_name"] = project_names.get(pid, f"Projet #{pid}")
+                else:
+                    t["_project_name"] = "Sans projet"
 
             # Service demandeur
             t["_service"] = parsed.service or "Non renseigné"
@@ -287,7 +334,12 @@ class TicketRepository:
             return {}
         projects = {}
         for p in self._client.get_all("Project", {"fields": "id,name"}):
-            projects[p["id"]] = p.get("name", "")
+            pid = p.get("id")
+            try:
+                pid = int(pid)
+            except (TypeError, ValueError):
+                continue
+            projects[pid] = p.get("name", "")
         return projects
 
     def get_ticket_history(self, ticket_id: int) -> list[dict]:

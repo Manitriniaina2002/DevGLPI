@@ -19,7 +19,8 @@ import logging
 import requests
 import urllib3
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, model_validator
+from typing import Optional
 
 from core.config import Settings, get_settings
 from core.security import (
@@ -36,8 +37,17 @@ router = APIRouter(prefix="/api/auth", tags=["Authentification"])
 
 
 # ── Schémas ───────────────────────────────────────────────────────
+
+
 class LoginRequest(BaseModel):
-    user_token: str
+    user_token: Optional[str] = Field(default=None)
+    one_time_token: Optional[str] = Field(default=None)
+
+    @model_validator(mode="after")
+    def require_one_token(self):
+        if self.user_token is None and self.one_time_token is None:
+            raise ValueError('user_token or one_time_token is required')
+        return self
 
 
 class LoginResponse(BaseModel):
@@ -166,6 +176,65 @@ def login(body: LoginRequest, settings: Settings = Depends(get_settings)):
       mock-acheteur     → rôle acheteur (ses tickets assignés)
       mock-demandeur    → rôle demandeur (ses propres demandes)
     """
+    # If a one-time token is provided by the GLPI plugin, verify it first.
+    if body.one_time_token:
+        # verify HMAC one-time token
+        try:
+            b, sig = body.one_time_token.split('.')
+        except Exception:
+            raise HTTPException(status_code=400, detail='invalid one_time_token')
+        import base64, hmac, hashlib, json
+
+        try:
+            payload_json = base64.urlsafe_b64decode(b + '===').decode('utf-8')
+            payload = json.loads(payload_json)
+        except Exception:
+            log.warning('one_time_token failed to decode payload')
+            raise HTTPException(status_code=400, detail='invalid one_time_token')
+
+        secret = settings.glpi_plugin_secret
+        log.info(
+            'one_time_token payload uid=%s login=%s exp=%s secret_set=%s',
+            payload.get('uid'),
+            payload.get('login'),
+            payload.get('exp'),
+            bool(secret),
+        )
+        if not secret:
+            raise HTTPException(status_code=500, detail='one_time_token verification not configured')
+
+        expected = hmac.new(secret.encode('utf-8'), b.encode('utf-8'), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, sig):
+            log.warning('one_time_token signature mismatch expected=%s actual=%s', expected, sig)
+            raise HTTPException(status_code=401, detail='invalid one_time_token signature')
+
+        if payload.get('exp', 0) < int(__import__('time').time()):
+            log.warning('one_time_token expired exp=%s now=%s', payload.get('exp'), int(__import__('time').time()))
+            raise HTTPException(status_code=401, detail='one_time_token expired')
+
+        # Accept the payload as authenticated user info and issue JWT
+        user_id = int(payload.get('uid', 0))
+        login = payload.get('login', f'user_{user_id}')
+        full_name = payload.get('full_name', login)
+        role = 'user'
+        token = create_access_token(
+            {
+                'sub': user_id,
+                'login': login,
+                'full_name': full_name,
+                'role': role,
+            },
+            settings,
+        )
+
+        return LoginResponse(
+            access_token=token,
+            user_id=user_id,
+            login=login,
+            full_name=full_name,
+            role=role,
+        )
+
     if settings.use_mock_data:
         return _mock_login(body.user_token, settings)
 

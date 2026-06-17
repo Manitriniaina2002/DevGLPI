@@ -10,6 +10,7 @@ services:
     hostname: new-glpi
     volumes:
       - "./storage/glpi:/var/glpi:rw"
+      - "./glpi/plugins:/var/www/glpi/plugins:rw"
       - "./php/glpi-session.ini:/usr/local/etc/php/conf.d/99-glpi-session.ini:ro"
       - "./cron/glpi-notifications:/etc/cron.d/glpi-notifications:ro"
     env_file: .env

@@ -32,6 +32,7 @@ services:
       GLPI_APP_TOKEN: "${GLPI_APP_TOKEN:-}"
       GLPI_USER_TOKEN: "${GLPI_USER_TOKEN:-}"
       GLPI_PURCHASE_CATEGORY_ID: "${GLPI_PURCHASE_CATEGORY_ID:-0}"
+      GLPI_PLUGIN_SECRET: "${GLPI_PLUGIN_SECRET:-}"
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,6 +57,8 @@ services:
       # URL publique du backend (accessible depuis le navigateur)
       # En prod, mettre l'URL publique de votre serveur
       NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:9000}"
+      # URL publique de GLPI (utilisée par le frontend pour appeler le plugin)
+      NEXT_PUBLIC_GLPI_URL: "${NEXT_PUBLIC_GLPI_URL:-http://nginx}"
       NODE_ENV: production
     depends_on:
       - backend

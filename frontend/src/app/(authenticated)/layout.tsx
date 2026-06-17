@@ -1,7 +1,7 @@
 'use client'
 
 import { ReactNode, useEffect, useRef } from 'react'
-import { LogOut, Settings, User } from 'lucide-react'
+import { ArrowRight, LogOut, Settings, User } from 'lucide-react'
 import { Button } from '@/app/components/ui/button'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
@@ -18,6 +18,8 @@ export default function AuthenticatedLayout({ children }: { children: ReactNode 
     localStorage.removeItem('auth_token')
     window.location.href = '/auth/login'
   }
+
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'
 
   return (
     <div className="h-dvh overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(76,139,64,0.14),transparent_20%)_top_left,_linear-gradient(180deg,_#f3f7f1_0%,_#eef3e8_100%)]">
@@ -56,6 +58,15 @@ export default function AuthenticatedLayout({ children }: { children: ReactNode 
               >
                 Utilisateurs
               </Link>
+              <a
+                href={appUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="flex items-center justify-between gap-3 rounded-xl px-4 py-3 text-sm font-semibold text-ades-green border border-ades-green/30 bg-white transition hover:bg-ades-green/10 hover:text-ades-green"
+              >
+                <span>Ouvrir l’application</span>
+                <ArrowRight className="w-4 h-4" />
+              </a>
             </nav>
           </div>
 
