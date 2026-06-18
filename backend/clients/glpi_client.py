@@ -148,6 +148,9 @@ class GLPIClient:
           GET /apirest.php/Ticket/<id>?with_logs=true&expand_dropdowns=true
 
         Retourne le JSON (incluant typiquement une clé `_logs`).
+
+        Note : dans certains GLPI, `_logs` peut être plafonné à la première page.
+        Pour récupérer l'intégralité, préférer `get_ticket_logs()`.
         """
         params = {
             "with_logs": "true",
@@ -155,6 +158,16 @@ class GLPIClient:
         }
         resp = self._get(f"Ticket/{ticket_id}", params=params)
         return resp.json() if resp.ok else {}
+
+    def get_ticket_logs(self, ticket_id: int, page_size: int = 500) -> list[dict]:
+        """Récupère l'intégralité du journal d'historique GLPI (`glpi_logs`).
+
+        Utilise le sous-type paginé : `Ticket/<id>/Log`.
+        Comme `get_all()` gère la pagination `range`/`206`, on évite les troncatures
+        potentielles de `with_logs=true`.
+        """
+        return self.get_all(f"Ticket/{ticket_id}/Log", {}, page_size)
+
 
     def get_ticket_changes(self, ticket_id: int, page_size: int = 500) -> list[dict]:
         """Récupère les changements (`glpi_changes`) liés à un ticket.

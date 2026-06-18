@@ -384,16 +384,25 @@ class TicketRepository:
 
         # Preferer l'historique déjà prêt côté GLPI
         # (chez toi, apirest.php/Ticket/<id>?with_logs=true renvoie une clé _logs)
-        logs_payload: dict = {}
         logs: list[dict] = []
-        if hasattr(self._client, "get_ticket_with_logs"):
+
+        # 1) Preferer `Ticket/<id>/Log` (pagination robuste)
+        if hasattr(self._client, "get_ticket_logs"):
             try:
-                logs_payload = self._client.get_ticket_with_logs(ticket_id)
+                logs = self._client.get_ticket_logs(ticket_id)
+            except Exception:
+                logs = []
+
+        # 2) Fallback : `with_logs=true` (peut être plafonné côté GLPI)
+        if not logs and hasattr(self._client, "get_ticket_with_logs"):
+            try:
+                logs_payload: dict = self._client.get_ticket_with_logs(ticket_id)
                 raw_logs = logs_payload.get("_logs") or logs_payload.get("logs") or []
                 if isinstance(raw_logs, list):
                     logs = raw_logs
             except Exception:
                 logs = []
+
 
         items: list[dict] = []
         users = self.get_users()
