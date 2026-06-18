@@ -382,13 +382,109 @@ class TicketRepository:
             "expand_dropdowns": 1,
         }
 
-        # Récupérer followups via helper (ou directement si helper absent)
+        # Preferer l'historique déjà prêt côté GLPI
+        # (chez toi, apirest.php/Ticket/<id>?with_logs=true renvoie une clé _logs)
+        logs_payload: dict = {}
+        logs: list[dict] = []
+        if hasattr(self._client, "get_ticket_with_logs"):
+            try:
+                logs_payload = self._client.get_ticket_with_logs(ticket_id)
+                raw_logs = logs_payload.get("_logs") or logs_payload.get("logs") or []
+                if isinstance(raw_logs, list):
+                    logs = raw_logs
+            except Exception:
+                logs = []
+
+        items: list[dict] = []
+        users = self.get_users()
+
+        def _extract_date_from_log(rec: dict) -> str | None:
+            # Dans l'extrait que tu as donné : date_mod
+            return rec.get("date_mod") or rec.get("date") or rec.get("date_creation") or rec.get("date_mod")
+
+        if logs:
+            for l in logs:
+                author_id = 0
+                # user_name est présent, mais on tente un id depuis le cache si possible
+                # (dans ton extrait, user_name est une string)
+                content = ""
+
+                # Mappage type et colonnes
+                itemtype_link = l.get("itemtype_link") or ""
+                linked_action = l.get("linked_action")
+
+                old_value = l.get("old_value")
+                new_value = l.get("new_value")
+
+                id_search_option = l.get("id_search_option")
+
+                # Contenu lisible
+                if itemtype_link == "ITILFollowup":
+                    entry_type = "followup"
+                else:
+                    entry_type = "change"
+
+                # Construire au minimum l'information change si GLPI fournit les colonnes.
+                # Objectif : ne pas perdre les entrées "change" (old_value/new_value/linked_action)
+                # même si `action/log` est vide.
+                champ: str = ""
+                mise_a_jour: str = ""
+
+                # Hint label si présent
+                if isinstance(id_search_option, str) and id_search_option.strip():
+                    champ = id_search_option.strip()
+                elif isinstance(id_search_option, int) and id_search_option:
+                    champ = str(id_search_option)
+
+                # Mise à jour change
+                if linked_action or (old_value is not None) or (new_value is not None):
+                    # Mise en forme basique (on garde le brut si pas de string)
+                    def _fmt(v: Any) -> str:
+                        if v is None:
+                            return ""
+                        if isinstance(v, str):
+                            return v.strip()
+                        return str(v)
+
+                    ov = _fmt(old_value)
+                    nv = _fmt(new_value)
+                    if ov or nv:
+                        mise_a_jour = f"{ov} -> {nv}".strip()
+                    if not champ and isinstance(linked_action, str) and linked_action.strip():
+                        champ = linked_action.strip()
+
+                # Contenu fallback (action/log) sinon mise_a_jour
+                content = l.get("action") or l.get("log") or l.get("new_value")
+                if not content and mise_a_jour:
+                    content = mise_a_jour
+                content = content or ""
+
+                items.append(
+                    {
+                        "id": l.get("id") or 0,
+                        "ticket_id": ticket_id,
+                        "date": _extract_date_from_log(l),
+                        "author_id": author_id,
+                        "author_name": l.get("user_name") or "",
+                        "content": content,
+                        "private": False,
+                        "type": entry_type,
+                        "champ": champ,
+                        "mise_a_jour": mise_a_jour,
+                        "raw": l,
+                    }
+                )
+
+            # Trier
+            items_sorted = sorted(items, key=lambda x: (x.get("date") or ""))
+            return items_sorted
+
+        # Fallback: followups + changes si with_logs ne renvoie rien
         if hasattr(self._client, "get_ticket_followups"):
             followups = self._client.get_ticket_followups(ticket_id)
         else:
             followups = self._client.get_all("TicketFollowup", params)
 
-        # Récupérer les changements (glpi_changes) si le client le permet
         changes: list[dict] = []
         if hasattr(self._client, "get_ticket_changes"):
             try:
@@ -400,6 +496,7 @@ class TicketRepository:
         users = self.get_users()
 
         items: list[dict] = []
+
 
         def _extract_date(rec: dict) -> str | None:
             return rec.get("date") or rec.get("date_creation") or rec.get("date_mod") or rec.get("dates")
@@ -427,11 +524,50 @@ class TicketRepository:
         # Transformer changes
         for c in changes:
             # Les enregistrements de changes peuvent contenir des colonnes différentes
-            author_id = c.get("users_id") or c.get("users_id_author") or c.get("users_id_recipient") or c.get("users_id_change") or 0
+            author_id = (
+                c.get("users_id")
+                or c.get("users_id_author")
+                or c.get("users_id_recipient")
+                or c.get("users_id_change")
+                or 0
+            )
             author_name = users.get(author_id, f"User #{author_id}")
-            # Essayer d'agréger la description des changements
-            change_desc = c.get("content") or c.get("changes") or c.get("comment") or str(c)
+
             date_val = _extract_date(c)
+            # Texte brut du changement
+            change_desc = c.get("content") or c.get("changes") or c.get("comment") or str(c)
+
+            # Tentative de mapping vers les colonnes GLPI "Champ" + "Mise à jour".
+            # Sur la page GLPI, on voit souvent des patterns du type :
+            # "Statut" / "Changement de ... à ..."
+            champ: str = ""
+            mise_a_jour: str = ""
+
+            # 1) Si GLPI renvoie déjà une clé "field" / "name" / "field_label"
+            for k in ("field", "field_label", "name", "items_id_field", "subfield"):
+                v = c.get(k)
+                if isinstance(v, str) and v.strip():
+                    champ = v.strip()
+                    break
+
+            # 2) Sinon, on essaie d'extraire via un séparateur ':' ou via parenthèses
+            # Exemple attendu : "Statut: Changement de Nouveau à En cours (Attribué)"
+            if not champ and isinstance(change_desc, str):
+                # Nettoyage minimal
+                txt = change_desc.replace("\n", " ").strip()
+                if ":" in txt:
+                    left, right = txt.split(":", 1)
+                    if left and right:
+                        champ = left.strip()
+                        mise_a_jour = right.strip()
+                if not champ:
+                    # Exemple : "Changement de Nouveau à En cours (Attribué)" -> champ inconnu
+                    mise_a_jour = txt
+            else:
+                # champ connu, on met tout le reste en mise_a_jour si vide
+                if not mise_a_jour and isinstance(change_desc, str):
+                    mise_a_jour = change_desc
+
             items.append(
                 {
                     "id": c.get("id") or c.get("changes_id") or 0,
@@ -439,12 +575,17 @@ class TicketRepository:
                     "date": date_val,
                     "author_id": author_id,
                     "author_name": author_name,
+                    # Compat: on garde content
                     "content": change_desc,
+                    # Nouveau: colonnes séparées
+                    "champ": champ,
+                    "mise_a_jour": mise_a_jour,
                     "private": False,
                     "type": "change",
                     "raw": c,
                 }
             )
+
 
         # Trier par date (les dates GLPI sont en iso-like ; trier en string fonctionne pour ISO)
         items_sorted = sorted(items, key=lambda x: (x.get("date") or ""))

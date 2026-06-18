@@ -106,7 +106,9 @@ class GLPIClient:
                     break
                 offset += page_size
             else:
-                log.warning("GET %s → HTTP %s", endpoint, resp.status_code)
+                # Log détaillé pour diagnostiquer les 400/401
+                body_preview = (resp.text or "")[:500]
+                log.warning("GET %s → HTTP %s | %s", endpoint, resp.status_code, body_preview)
                 break
 
         return items
@@ -138,6 +140,21 @@ class GLPIClient:
             or str(item.get("tickets_id")) == str(ticket_id)
             or str(item.get("ticket_id")) == str(ticket_id)
         ]
+
+    def get_ticket_with_logs(self, ticket_id: int) -> dict:
+        """Récupère un Ticket avec l'historique déjà reconstruit.
+
+        Endpoint GLPI (chez toi) :
+          GET /apirest.php/Ticket/<id>?with_logs=true&expand_dropdowns=true
+
+        Retourne le JSON (incluant typiquement une clé `_logs`).
+        """
+        params = {
+            "with_logs": "true",
+            "expand_dropdowns": "true",
+        }
+        resp = self._get(f"Ticket/{ticket_id}", params=params)
+        return resp.json() if resp.ok else {}
 
     def get_ticket_changes(self, ticket_id: int, page_size: int = 500) -> list[dict]:
         """Récupère les changements (`glpi_changes`) liés à un ticket.
