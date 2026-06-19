@@ -171,6 +171,10 @@ def ticket_workflow(
       3. **Attribution** — assignation à un acheteur (depuis les logs ou users_id_assign)
       4. **Solution**    — ajout d'une solution (log ITILSolution / linked_action=17)
       5. **Résolution**  — clôture (statut 5 ou 6) + date
+
+    Les noms d'acteurs (validateur, créateur, acheteur assigné…) sont résolus
+    via l'annuaire GLPI (TicketRepository.get_users()) pour éviter les
+    placeholders type "User #2".
     """
     df, dt = dates
     tickets = repo.get_purchase_tickets(df, dt)
@@ -194,7 +198,17 @@ def ticket_workflow(
     except Exception:
         validations = []
 
-    return svc.build_workflow(ticket, logs_raw, validations)
+    # Annuaire utilisateurs GLPI (id → nom complet) pour résoudre les acteurs
+    # affichés dans le workflow (validateur, créateur, acheteur assigné...).
+    # En mode mock, pas d'annuaire GLPI réel disponible.
+    users: dict[int, str] = {}
+    if not settings.use_mock_data:
+        try:
+            users = repo.get_users()
+        except Exception:
+            users = {}
+
+    return svc.build_workflow(ticket, logs_raw, validations, users=users)
 
 
 @router.get("/{ticket_id}/history")
