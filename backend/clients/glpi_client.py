@@ -212,3 +212,73 @@ class GLPIClient:
                     return filtered
 
         return []
+
+    # ── Acteurs réels (acheteur assigné, profils GLPI) ───────────────────
+    def get_ticket_assignees_map(self, page_size: int = 500) -> dict[int, list[int]]:
+        """
+        Construit une map {ticket_id: [users_id assignés comme Technicien/Acheteur]}
+        à partir de la table relationnelle `glpi_tickets_users` (classe GLPI
+        `Ticket_User`).
+
+        Codes `type` GLPI : 1 = Demandeur, 2 = Technicien assigné
+        (Acheteur dans ce workflow), 3 = Observateur.
+
+        Contrairement aux champs directs du `Ticket` (souvent absents côté API)
+        ou aux logs d'historique (qui demandent de reconstituer la chronologie),
+        cette table ne contient que l'état COURANT : GLPI supprime l'ancienne
+        ligne et insère la nouvelle lors d'une réattribution. Pas d'ambiguïté
+        en cas de changement d'acheteur.
+        """
+        mapping: dict[int, list[int]] = {}
+        items = self.get_all("Ticket_User", {"fields": "id,tickets_id,users_id,type"}, page_size)
+        for it in items:
+            try:
+                if int(it.get("type")) != 2:
+                    continue
+                tid = int(it.get("tickets_id"))
+                uid = int(it.get("users_id"))
+            except (TypeError, ValueError):
+                continue
+            mapping.setdefault(tid, []).append(uid)
+        return mapping
+
+    def get_users_with_profile(self, profile_names: set[str], page_size: int = 500) -> list[int]:
+        """
+        Retourne les ids des utilisateurs ayant un profil GLPI dont le nom
+        (en minuscules, espaces superflus retirés) figure dans `profile_names`.
+
+        Utilise `glpi_profiles` (classe `Profile`) pour trouver le(s) profils_id
+        correspondant(s), puis `glpi_profiles_users` (classe `Profile_User`)
+        pour les utilisateurs liés à ce(s) profil(s).
+        """
+        profiles = self.get_all("Profile", {"fields": "id,name"}, page_size)
+        matching_ids = {
+            p["id"] for p in profiles
+            if (p.get("name") or "").strip().lower() in profile_names
+        }
+        if not matching_ids:
+            log.warning(
+                "Aucun profil GLPI ne correspond à %s — vérifier le nom exact "
+                "du profil Acheteur dans GLPI (Administration > Profils)",
+                sorted(profile_names),
+            )
+            return []
+
+        user_ids: set[int] = set()
+        for pid in matching_ids:
+            # Sous-ressource dédiée (même pattern que Ticket/<id>/TicketValidation)
+            items = self.get_all(f"Profile/{pid}/Profile_User", {}, page_size)
+            if not items:
+                # Fallback générique si la sous-ressource n'est pas exposée ainsi
+                items = self.get_all(
+                    "Profile_User",
+                    {"searchText[profiles_id]": pid},
+                    page_size,
+                )
+            for it in items:
+                try:
+                    user_ids.add(int(it.get("users_id")))
+                except (TypeError, ValueError):
+                    continue
+
+        return sorted(user_ids)

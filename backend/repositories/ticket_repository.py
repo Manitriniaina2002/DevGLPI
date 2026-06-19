@@ -4,6 +4,8 @@ Adapté au formulaire réel GLPI Forms "DEMANDE D'ACHAT" :
   - Projet et Service sont dans le CONTENT du ticket (pas dans projects_id)
   - Urgence est fixée à 3 par le formulaire → on la lit depuis content si dispo
   - Tous les tickets GLPI sont des demandes d'achat → pas de filtre par mots-clés
+  - L'acheteur assigné est résolu via la table relationnelle Ticket_User
+    (glpi_tickets_users, type=2) — voir _enrich() pour le détail
 """
 from __future__ import annotations
 
@@ -94,11 +96,28 @@ class TicketRepository:
     def _enrich(self, tickets: list[dict]) -> list[dict]:
         """
         Enrichit les tickets avec :
-        - _project_name : extrait du content HTML (formulaire GLPI Forms)
-        - _service      : service demandeur (content HTML)
-        - _buyer_name   : nom de l'utilisateur assigné ou demandeur
-        - _lieu         : lieu de livraison (content HTML)
-        - _urgence_int  : urgence réelle si renseignée dans le formulaire
+        - _project_name  : extrait du content HTML (formulaire GLPI Forms)
+        - _service       : service demandeur (content HTML)
+        - _buyer_user_id : id GLPI de l'acheteur RÉELLEMENT assigné (0 si aucun)
+        - _buyer_name    : nom résolu depuis _buyer_user_id ("Non assigné" si 0)
+        - _lieu          : lieu de livraison (content HTML)
+        - _urgence_int   : urgence réelle si renseignée dans le formulaire
+
+        Résolution de l'acheteur (_buyer_user_id / _buyer_name) :
+        ──────────────────────────────────────────────────────────
+        Source de vérité = table relationnelle `glpi_tickets_users` (classe
+        `Ticket_User`), filtrée sur type=2 (Technicien/Acheteur assigné).
+        C'est la même table que GLPI utilise pour afficher "Attribué à" dans
+        son UI, et contrairement aux logs d'historique elle ne contient que
+        l'état COURANT : pas besoin de gérer les réassignations.
+
+        On NE retombe PLUS sur des champs comme users_id_requester ou
+        users_id_recipient en cas d'absence d'assignation — ces champs
+        désignent le demandeur ou le destinataire, pas l'acheteur, et les
+        utiliser comme fallback affichait silencieusement le demandeur à la
+        place de l'acheteur (bug découvert sur le ticket #45 : _buyer_name
+        affichait toujours le créateur du ticket, même après réattribution).
+        Un ticket sans acheteur assigné affiche désormais "Non assigné".
         """
         if self._settings.use_mock_data:
             return tickets
@@ -117,6 +136,15 @@ class TicketRepository:
         name_to_uid = {v.lower(): k for k, v in users.items() if isinstance(v, str)}
 
         project_names = self.get_projects() if self._client else {}
+
+        # Acheteur réellement assigné par ticket, depuis Ticket_User (type=2).
+        # Une seule requête pour tous les tickets (pas de N+1).
+        assignees_map: dict[int, list[int]] = {}
+        if hasattr(self._client, "get_ticket_assignees_map"):
+            try:
+                assignees_map = self._client.get_ticket_assignees_map()
+            except Exception:
+                assignees_map = {}
 
         for t in tickets:
             # ── Parser le content du formulaire ──────────────────
@@ -157,72 +185,42 @@ class TicketRepository:
             else:
                 t["_urgence_int"] = t.get("urgency") or t.get("priority") or 3
 
-            # Acheteur → essayer plusieurs champs possibles (les installations GLPI varient)
-            def _get_uid_from_ticket(rec: dict) -> int:
-                candidates = (
-                    "users_id_assign",
-                    "users_id_assignments_id",
-                    "users_id_assignments",
-                    "users_id_assigned",
-                    "assigned_to",
-                    "assigned_to_id",
-                    "users_id_taker",
-                    "users_id_requester",
-                    "users_id_recipient",
-                    "users_id_change",
-                )
-                for k in candidates:
-                    v = rec.get(k)
-                    if v:
-                        # If the field is numeric (id), return it
-                        try:
-                            return int(v)
-                        except (TypeError, ValueError):
-                            # If the field is a name (expand_dropdowns), try to resolve it
-                            if isinstance(v, str):
-                                name_key = v.lower()
-                                uid = name_to_uid.get(name_key)
-                                if uid is not None:
-                                    return int(uid)
-                                # Try partial match: GLPI may return only a first name
+            # ── Acheteur assigné ──────────────────────────────────
+            try:
+                tid = int(t.get("id"))
+            except (TypeError, ValueError):
+                tid = None
+
+            assigned_ids = assignees_map.get(tid, []) if tid is not None else []
+
+            if assigned_ids:
+                # Cas normal : un seul acheteur assigné. S'il y en a plusieurs
+                # (rare en pratique sur ce workflow), on garde le premier —
+                # à affiner si le multi-acheteur devient un cas réel.
+                uid = assigned_ids[0]
+            else:
+                # Fallback minimal : champ direct du ticket, au cas où une
+                # installation GLPI le peuplerait directement (rare via API).
+                # On ne devine plus l'acheteur depuis le demandeur/observateur.
+                uid = 0
+                v = t.get("users_id_assign")
+                if v:
+                    try:
+                        uid = int(v)
+                    except (TypeError, ValueError):
+                        if isinstance(v, str):
+                            name_key = v.lower()
+                            resolved = name_to_uid.get(name_key)
+                            if resolved is not None:
+                                uid = resolved
+                            else:
                                 for nm, uid2 in name_to_uid.items():
                                     if name_key in nm or nm in name_key:
-                                        return int(uid2)
-                            continue
-                # Fallback: some GLPI responses embed links or nested structures
-                # Try simple heuristics
-                if isinstance(rec.get("users"), dict):
-                    u = rec["users"].get("id") or rec["users"].get("users_id")
-                    try:
-                        return int(u)
-                    except (TypeError, ValueError):
-                        pass
-                # As a last resort, fetch the detailed ticket and retry (some endpoints return names instead of ids)
-                try:
-                    tid = rec.get("id")
-                    if tid and self._client:
-                        detailed = self._client.get_one("Ticket", tid)
-                        # Retry candidates on the detailed record
-                        for k in candidates:
-                            v2 = detailed.get(k)
-                            if v2:
-                                try:
-                                    return int(v2)
-                                except (TypeError, ValueError):
-                                    if isinstance(v2, str):
-                                        uid2 = name_to_uid.get(v2.lower())
-                                        if uid2 is not None:
-                                            return int(uid2)
-                                        for nm, uid3 in name_to_uid.items():
-                                            if v2.lower() in nm or nm in v2.lower():
-                                                return int(uid3)
-                except Exception:
-                    pass
+                                        uid = uid2
+                                        break
 
-                return 0
-
-            uid = _get_uid_from_ticket(t)
-            t["_buyer_name"] = users.get(uid, f"User #{uid}")
+            t["_buyer_user_id"] = uid
+            t["_buyer_name"] = users.get(uid, f"User #{uid}") if uid else "Non assigné"
 
         return tickets
 
