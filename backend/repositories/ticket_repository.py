@@ -142,6 +142,9 @@ class TicketRepository:
             # Bénéficiaire
             t["_beneficiaire"] = parsed.beneficiaire or ""
 
+            # Date de livraison souhaitée
+            t["_date_livraison"] = parsed.date_livr or ""
+
             # Description
             t["_description"] = parsed.description or ""
 
@@ -411,71 +414,111 @@ class TicketRepository:
             # Dans l'extrait que tu as donné : date_mod
             return rec.get("date_mod") or rec.get("date") or rec.get("date_creation") or rec.get("date_mod")
 
+        # ── Traduction GLPI logs (champ + mise_a_jour lisibles) ─────────────────
+        # Objectif : reproduire la couche de mapping de l'UI GLPI.
+        _LINKED_ACTION_ADD_SUBITEM = 17   # ajout d'un sous-élément (Suivi, Tâche...)
+        _LINKED_ACTION_ADD_LINK = 15      # ajout d'un lien vers un élément (User...)
+        _ITEMTYPE_LABELS_FR = {
+            "ITILFollowup": "Suivi",
+            "TicketTask": "Tâche",
+            "Document_Item": "Document",
+        }
+
+        def _format_duration_fr(value: Any) -> str:
+            try:
+                seconds = int(value)
+            except (TypeError, ValueError):
+                return str(value)
+            if seconds <= 0:
+                return "0 seconde"
+            days, rem = divmod(seconds, 86400)
+            hours, rem = divmod(rem, 3600)
+            minutes, secs = divmod(rem, 60)
+            parts = []
+            if days:
+                parts.append(f"{days} jour{'s' if days > 1 else ''}")
+            if hours:
+                parts.append(f"{hours} heure{'s' if hours > 1 else ''}")
+            if minutes:
+                parts.append(f"{minutes} minute{'s' if minutes > 1 else ''}")
+            if not parts and secs:
+                parts.append(f"{secs} seconde{'s' if secs > 1 else ''}")
+            return " ".join(parts) if parts else "0 seconde"
+
+        def _format_log_message(l: dict, ov: str, nv: str) -> str:
+            linked_action = l.get("linked_action")
+            itemtype_link = l.get("itemtype_link") or ""
+
+            if not ov and not nv and linked_action:
+                return "Ajouter l'élément"
+
+            if linked_action == _LINKED_ACTION_ADD_SUBITEM and nv:
+                label = _ITEMTYPE_LABELS_FR.get(itemtype_link, itemtype_link or "élément")
+                return f"Ajout d'un élément : {label} ({nv})"
+
+            if linked_action == _LINKED_ACTION_ADD_LINK and nv:
+                return f"Ajout d'un lien avec un élément : {nv}"
+
+            if ov and nv:
+                return f"Changement de {ov} à {nv}"
+
+            return nv or ov
+
+        search_options: dict[int, dict] = {}
+        if hasattr(self._client, "get_search_options"):
+            try:
+                search_options = self._client.get_search_options("Ticket")
+            except Exception:
+                search_options = {}
+
         if logs:
             for l in logs:
-                author_id = 0
-                # user_name est présent, mais on tente un id depuis le cache si possible
-                # (dans ton extrait, user_name est une string)
-                content = ""
-
-                # Mappage type et colonnes
                 itemtype_link = l.get("itemtype_link") or ""
-                linked_action = l.get("linked_action")
-
-                old_value = l.get("old_value")
-                new_value = l.get("new_value")
-
                 id_search_option = l.get("id_search_option")
+                old_value, new_value = l.get("old_value"), l.get("new_value")
 
-                # Contenu lisible
-                if itemtype_link == "ITILFollowup":
-                    entry_type = "followup"
-                else:
-                    entry_type = "change"
+                entry_type = "followup" if itemtype_link == "ITILFollowup" else "change"
 
-                # Construire au minimum l'information change si GLPI fournit les colonnes.
-                # Objectif : ne pas perdre les entrées "change" (old_value/new_value/linked_action)
-                # même si `action/log` est vide.
-                champ: str = ""
-                mise_a_jour: str = ""
+                champ = ""
+                if isinstance(id_search_option, int) and id_search_option:
+                    champ = search_options.get(id_search_option, {}).get("name", str(id_search_option))
 
-                # Hint label si présent
-                if isinstance(id_search_option, str) and id_search_option.strip():
-                    champ = id_search_option.strip()
-                elif isinstance(id_search_option, int) and id_search_option:
-                    champ = str(id_search_option)
+                # Si GLPI n'associe pas de champ (ou que c'est un sous-élément), on dérive via itemtype_link
+                elif l.get("linked_action") == _LINKED_ACTION_ADD_SUBITEM and itemtype_link:
+                    champ = _ITEMTYPE_LABELS_FR.get(itemtype_link, itemtype_link)
 
-                # Mise à jour change
-                if linked_action or (old_value is not None) or (new_value is not None):
-                    # Mise en forme basique (on garde le brut si pas de string)
-                    def _fmt(v: Any) -> str:
-                        if v is None:
-                            return ""
-                        if isinstance(v, str):
-                            return v.strip()
-                        return str(v)
+                def _norm_str(v: Any) -> str:
+                    if isinstance(v, str):
+                        return v.strip()
+                    return str(v) if v is not None else ""
 
-                    ov = _fmt(old_value)
-                    nv = _fmt(new_value)
-                    if ov or nv:
-                        mise_a_jour = f"{ov} -> {nv}".strip()
-                    if not champ and isinstance(linked_action, str) and linked_action.strip():
-                        champ = linked_action.strip()
+                ov = _norm_str(old_value or "")
+                nv = _norm_str(new_value or "")
 
-                # Contenu fallback (action/log) sinon mise_a_jour
-                content = l.get("action") or l.get("log") or l.get("new_value")
-                if not content and mise_a_jour:
-                    content = mise_a_jour
-                content = content or ""
+                # Statut : traduire codes entiers (id_search_option == 12)
+                if id_search_option == 12:
+                    if ov.isdigit():
+                        ov = self._settings.status_map.get(int(ov), ov)
+                    if nv.isdigit():
+                        nv = self._settings.status_map.get(int(nv), nv)
+
+                # Durées/SLA : conversion secondes -> texte
+                if champ and any(k in champ.lower() for k in ("délai", "temps", "durée")):
+                    if ov.lstrip("-").isdigit():
+                        ov = _format_duration_fr(ov)
+                    if nv.lstrip("-").isdigit():
+                        nv = _format_duration_fr(nv)
+
+                mise_a_jour = _format_log_message(l, ov, nv)
 
                 items.append(
                     {
                         "id": l.get("id") or 0,
                         "ticket_id": ticket_id,
                         "date": _extract_date_from_log(l),
-                        "author_id": author_id,
+                        "author_id": 0,
                         "author_name": l.get("user_name") or "",
-                        "content": content,
+                        "content": mise_a_jour,
                         "private": False,
                         "type": entry_type,
                         "champ": champ,
@@ -484,9 +527,9 @@ class TicketRepository:
                     }
                 )
 
-            # Trier
             items_sorted = sorted(items, key=lambda x: (x.get("date") or ""))
             return items_sorted
+
 
         # Fallback: followups + changes si with_logs ne renvoie rien
         if hasattr(self._client, "get_ticket_followups"):

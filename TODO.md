@@ -1,9 +1,7 @@
-- [x] Corriger backend/repositories/ticket_repository.py : bloc `if logs:`
-  - [x] Dédupliquer les entrées (par id/type/date) pour éviter toute perte
-  - [x] Garantir l’exhaustivité : détecter aussi les entrées « change » via old_value/new_value/linked_action/id_search_option (même si action/log est vide)
-  - [x] Remplir champ/mise_a_jour pour les logs « change » (old_value -> new_value)
-  - [x] Supprimer le code dupliqué champ/mise_a_jour (le double reset)
-- [ ] Mettre à jour/valider le tri (date_mod/date_creation/date_creation) si nécessaire
-- [ ] Exécuter test manuel : /api/tickets/26/history et vérifier l’affichage des codes `1916 / 2771 / 2772 …`
-
+- [ ] Revue du routing FastAPI existant (tickets router)
+- [ ] Confirmer que GET /api/tickets/{id}/workflow est bien exposé dans backend/api/routes/tickets.py
+- [ ] S’assurer que le endpoint applique les règles d’accès par rôle comme les autres endpoints tickets
+- [ ] Vérifier l’implémentation côté services/workflow_service.py (construction du workflow + chargement des validations)
+- [ ] Adapter le endpoint pour utiliser la méthode GLPIClient dédiée aux validations (get_ticket_validations) si nécessaire
+- [ ] Lancer tests / vérifications rapides (python -m compileall, éventuellement un test curl en mock)
 

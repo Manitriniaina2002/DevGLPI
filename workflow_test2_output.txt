@@ -1,0 +1,195 @@
+=== TEST 1: Mock resolu ===
+{
+  "ticket_id": 1,
+  "statut_global": "in_progress",
+  "etapes": [
+    {
+      "etape": "creation",
+      "label": "Création",
+      "statut": "done",
+      "date": "2025-06-01 08:00:00",
+      "acteur": "RANDRIANIRINA Isabelle",
+      "detail": null
+    },
+    {
+      "etape": "validation",
+      "label": "Validation",
+      "statut": "unknown",
+      "date": null,
+      "acteur": null,
+      "detail": "Aucune validation GLPI enregistrée"
+    },
+    {
+      "etape": "attribution",
+      "label": "Attribution",
+      "statut": "done",
+      "date": null,
+      "acteur": "RANDRIANIRINA Isabelle",
+      "detail": null
+    },
+    {
+      "etape": "solution",
+      "label": "Solution",
+      "statut": "pending",
+      "date": null,
+      "acteur": null,
+      "detail": null
+    },
+    {
+      "etape": "resolution",
+      "label": "Résolution",
+      "statut": "done",
+      "date": "2025-06-15 17:00:00",
+      "acteur": "RANDRIANIRINA Isabelle",
+      "detail": "Résolu"
+    }
+  ]
+}
+
+=== TEST 2: Complet avec solution ===
+{
+  "ticket_id": 42,
+  "statut_global": "done",
+  "etapes": [
+    {
+      "etape": "creation",
+      "label": "Création",
+      "statut": "done",
+      "date": "2025-03-10 09:00:00",
+      "acteur": "RAKOTO Jean",
+      "detail": null
+    },
+    {
+      "etape": "validation",
+      "label": "Validation",
+      "statut": "done",
+      "date": "2025-03-11 09:00:00",
+      "acteur": "RANDRIANIRINA Isabelle",
+      "detail": "Bon pour achat"
+    },
+    {
+      "etape": "attribution",
+      "label": "Attribution",
+      "statut": "done",
+      "date": "2025-03-11 10:00:00",
+      "acteur": "ANDRIANASOLO Ny Ando",
+      "detail": null
+    },
+    {
+      "etape": "solution",
+      "label": "Solution",
+      "statut": "done",
+      "date": "2025-03-20 11:00:00",
+      "acteur": "ANDRIANASOLO Ny Ando",
+      "detail": null
+    },
+    {
+      "etape": "resolution",
+      "label": "Résolution",
+      "statut": "done",
+      "date": "2025-03-25 14:00:00",
+      "acteur": "ANDRIANASOLO Ny Ando",
+      "detail": "Résolu"
+    }
+  ]
+}
+
+=== TEST 3: Validation refusee ===
+{
+  "ticket_id": 99,
+  "statut_global": "refused",
+  "etapes": [
+    {
+      "etape": "creation",
+      "label": "Création",
+      "statut": "done",
+      "date": "2025-04-01 08:00:00",
+      "acteur": "RAJAONARISON Heriniaina",
+      "detail": null
+    },
+    {
+      "etape": "validation",
+      "label": "Validation",
+      "statut": "refused",
+      "date": "2025-04-03 14:00:00",
+      "acteur": "CHEF",
+      "detail": "Budget insuffisant"
+    },
+    {
+      "etape": "attribution",
+      "label": "Attribution",
+      "statut": "done",
+      "date": null,
+      "acteur": "RAJAONARISON Heriniaina",
+      "detail": null
+    },
+    {
+      "etape": "solution",
+      "label": "Solution",
+      "statut": "pending",
+      "date": null,
+      "acteur": null,
+      "detail": null
+    },
+    {
+      "etape": "resolution",
+      "label": "Résolution",
+      "statut": "pending",
+      "date": null,
+      "acteur": null,
+      "detail": "Nouveau"
+    }
+  ]
+}
+
+=== TEST 4: Fallback textuel ===
+{
+  "ticket_id": 55,
+  "statut_global": "in_progress",
+  "etapes": [
+    {
+      "etape": "creation",
+      "label": "Création",
+      "statut": "done",
+      "date": "2025-05-01 08:00:00",
+      "acteur": "RAHARINIRINA Claire",
+      "detail": null
+    },
+    {
+      "etape": "validation",
+      "label": "Validation",
+      "statut": "unknown",
+      "date": null,
+      "acteur": null,
+      "detail": "Aucune validation GLPI enregistrée"
+    },
+    {
+      "etape": "attribution",
+      "label": "Attribution",
+      "statut": "done",
+      "date": null,
+      "acteur": "RAHARINIRINA Claire",
+      "detail": null
+    },
+    {
+      "etape": "solution",
+      "label": "Solution",
+      "statut": "done",
+      "date": "2025-05-05 14:00:00",
+      "acteur": "RAHARINIRINA Claire",
+      "detail": null
+    },
+    {
+      "etape": "resolution",
+      "label": "Résolution",
+      "statut": "done",
+      "date": "2025-05-10 16:00:00",
+      "acteur": "RAHARINIRINA Claire",
+      "detail": "Résolu"
+    }
+  ]
+}
+
+==============================
+TOUS LES TESTS ONT REUSSI
+==============================

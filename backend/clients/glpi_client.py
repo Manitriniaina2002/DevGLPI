@@ -168,8 +168,22 @@ class GLPIClient:
         """
         return self.get_all(f"Ticket/{ticket_id}/Log", {}, page_size)
 
+    def get_ticket_validations(self, ticket_id: int, page_size: int = 500) -> list[dict]:
+        """Récupère les demandes de validation (TicketValidation) liées à un ticket."""
+        # Sous-type (si exposé ainsi par l'API)
+        items = self.get_all(f"Ticket/{ticket_id}/TicketValidation", {}, page_size)
+        if items:
+            return items
+        # Fallback générique
+        return self.get_all(
+            "TicketValidation",
+            {"searchText[tickets_id]": ticket_id, "sort": "submission_date", "order": "ASC"},
+            page_size,
+        )
+
 
     def get_ticket_changes(self, ticket_id: int, page_size: int = 500) -> list[dict]:
+
         """Récupère les changements (`glpi_changes`) liés à un ticket.
 
         Certains environnements GLPI exposent ce type via la ressource `Change`.

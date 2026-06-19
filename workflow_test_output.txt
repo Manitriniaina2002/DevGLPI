@@ -1,0 +1,57 @@
+============================================================
+TEST 1: Ticket mock résolu (sans logs, sans validations)
+============================================================
+{
+  "ticket_id": 1,
+  "statut_global": "in_progress",
+  "etapes": [
+    {
+      "etape": "creation",
+      "label": "Création",
+      "statut": "done",
+      "date": "2025-06-01 08:00:00",
+      "acteur": "RANDRIANIRINA Isabelle",
+      "detail": null
+    },
+    {
+      "etape": "validation",
+      "label": "Validation",
+      "statut": "unknown",
+      "date": null,
+      "acteur": null,
+      "detail": "Aucune validation GLPI enregistrée"
+    },
+    {
+      "etape": "attribution",
+      "label": "Attribution",
+      "statut": "done",
+      "date": null,
+      "acteur": "RANDRIANIRINA Isabelle",
+      "detail": null
+    },
+    {
+      "etape": "solution",
+      "label": "Solution",
+      "statut": "pending",
+      "date": null,
+      "acteur": null,
+      "detail": null
+    },
+    {
+      "etape": "resolution",
+      "label": "Résolution",
+      "statut": "done",
+      "date": "2025-06-15 17:00:00",
+      "acteur": "RANDRIANIRINA Isabelle",
+      "detail": "Résolu"
+    }
+  ]
+}
+Traceback (most recent call last):
+  File "C:\tmp\run_workflow_tests.py", line 47, in <module>
+    print("\u2713 Test 1 PASSÉ")
+    ~~~~~^^^^^^^^^^^^^^^^^^
+  File "C:\Python314\Lib\encodings\cp1252.py", line 19, in encode
+    return codecs.charmap_encode(input,self.errors,encoding_table)[0]
+           ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+UnicodeEncodeError: 'charmap' codec can't encode character '\u2713' in position 0: character maps to <undefined>

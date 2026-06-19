@@ -50,6 +50,7 @@ class TicketService:
             "priority": ticket.get("priority", 0),
             "date_creation": ticket.get("date"),
             "date_resolution": ticket.get("closedate") or ticket.get("solvedate"),
+            "date_livraison": ticket.get("_date_livraison") or None,
             "time_to_resolve": ticket.get("time_to_resolve"),
             "is_late": _is_late(ticket, self._s.resolved_statuses),
             "delai_jours": _processing_days(ticket),

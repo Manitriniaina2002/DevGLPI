@@ -22,6 +22,8 @@ from core.security import CurrentUser, get_current_user, get_current_user_option
 from repositories.ticket_repository import TicketRepository
 from services.ticket_service import TicketService
 from services.alert_service import AlertService
+from services.workflow_service import WorkflowService
+
 
 router = APIRouter(prefix="/api/tickets", tags=["Tickets"])
 
@@ -150,6 +152,49 @@ def get_ticket(
 
     result = svc.filter_and_paginate(match, limit=1)
     return result["tickets"][0]
+
+
+@router.get("/{ticket_id}/workflow")
+def ticket_workflow(
+    ticket_id: int,
+    dates: tuple = Depends(get_date_range),
+    repo: TicketRepository = Depends(_get_repo),
+    svc: WorkflowService = Depends(lambda settings=Depends(get_settings): WorkflowService(settings)),
+    settings: Settings = Depends(get_settings),
+    user: Optional[CurrentUser] = Depends(get_current_user_optional),
+):
+    """
+    Retourne les 5 étapes du cycle de vie achat pour un ticket :
+
+      1. **Création**    — date de création + demandeur
+      2. **Validation**  — TicketValidation GLPI (done / pending / refused / unknown)
+      3. **Attribution** — assignation à un acheteur (depuis les logs ou users_id_assign)
+      4. **Solution**    — ajout d'une solution (log ITILSolution / linked_action=17)
+      5. **Résolution**  — clôture (statut 5 ou 6) + date
+    """
+    df, dt = dates
+    tickets = repo.get_purchase_tickets(df, dt)
+    tickets = _apply_role_filter(tickets, user, settings)
+    match = [t for t in tickets if t.get("id") == ticket_id]
+
+    if not match:
+        raise HTTPException(status_code=404, detail=f"Ticket #{ticket_id} introuvable ou non accessible")
+
+    ticket = match[0]
+
+    # Logs / historique
+    logs_raw = repo.get_ticket_history(ticket_id)
+
+    # Validations GLPI (si possible via client)
+    validations: list[dict] = []
+    try:
+        if not settings.use_mock_data and getattr(repo, "_client", None):
+            # Délégation via client : méthode dédiée
+            validations = repo._client.get_ticket_validations(ticket_id)
+    except Exception:
+        validations = []
+
+    return svc.build_workflow(ticket, logs_raw, validations)
 
 
 @router.get("/{ticket_id}/history")
