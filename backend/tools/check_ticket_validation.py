@@ -20,7 +20,7 @@ s = Settings()
 c = GLPIClient(s)
 
 # Choisir un ticket qui a réellement été validé / refusé dans GLPI
-TID = 28  # <-- remplace par un ticket validé si besoin
+TID = 45  # <-- remplace par un ticket validé si besoin
 
 raw = c.get_one('Ticket', TID)
 print('global_validation sur le ticket =', raw.get('global_validation'))

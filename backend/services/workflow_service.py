@@ -3,10 +3,13 @@ services/workflow_service.py — Suivi du workflow achat en 5 étapes
 ==================================================================
 Reconstruit les étapes du cycle de vie d'un ticket d'achat :
 
-  1. Création    → date de création du ticket + demandeur
+  1. Création    → linked_action=20 ou date de création du ticket
   2. Validation  → TicketValidation GLPI (accepté / refusé / en attente)
-  3. Attribution → assignation à un acheteur (log linked_action=15 ou users_id_assign)
-  4. Solution    → ajout d'une solution (log ITILSolution / linked_action=17)
+                   ou détection dans les logs (linked_action=0, id_search_option=52 ou contenu)
+  3. Attribution → linked_action=15, itemtype_link contient "User"
+                   ou fallback sur users_id_assign
+  4. Solution    → linked_action=17, itemtype_link="ITILSolution"
+                   ou log contenant "solution" dans le contenu
   5. Résolution  → statut 5 (Résolu) ou 6 (Clos) + closedate/solvedate
 
 Statuts possibles pour chaque étape :
@@ -19,23 +22,35 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from core.config import Settings
-
-# ── Codes de statut TicketValidation GLPI (CommonITILValidation) ──
+# ── Codes de statut TicketValidation GLPI 11.0.6 (confirmés par API) ────────
+# Valeurs réelles retournées par CommonITILValidation dans GLPI 11.0.6 :
+#   1 = En attente de validation
+#   2 = Refusée
+#   3 = Acceptée   ← inversé par rapport aux anciennes docs
 VALIDATION_WAITING  = 1
-VALIDATION_ACCEPTED = 2
-VALIDATION_REFUSED  = 3
+VALIDATION_REFUSED  = 2
+VALIDATION_ACCEPTED = 3
 
 VALIDATION_STATUS_MAP = {
-    VALIDATION_WAITING:  "pending",
-    VALIDATION_ACCEPTED: "done",
-    VALIDATION_REFUSED:  "refused",
+    1: "pending",   # En attente
+    2: "refused",   # Refusée  (GLPI 11.0.6 confirmé)
+    3: "done",      # Acceptée (GLPI 11.0.6 confirmé)
+    4: "refused",   # Refusée  (variante selon config)
+    5: "pending",   # En attente (variante selon config)
 }
 
+# Statuts ticket GLPI
+STATUS_RESOLVED = 5
+STATUS_CLOSED   = 6
+
 # linked_action GLPI
-LINKED_ACTION_ADD_LINK       = 15  # ajout d'un lien (attribution User, etc.)
-LINKED_ACTION_ADD_SUBITEM   = 17  # ajout d'un sous-élément (Solution, Followup, Task...)
-LINKED_ACTION_CREATE        = 20  # création du ticket
+LINKED_ACTION_FIELD_CHANGE     = 0   # Modification d'un champ
+LINKED_ACTION_ADD_LINK         = 15  # Ajout d'un lien utilisateur/acteur
+LINKED_ACTION_ADD_ELEMENT      = 17  # Ajout d'un élément lié (solution, suivi…)
+LINKED_ACTION_CREATE           = 20  # Création de l'élément
+
+# id_search_option pour le statut du ticket
+SEARCH_OPTION_STATUS = 12
 
 
 def _parse_dt(val: Any) -> Optional[str]:
@@ -45,95 +60,173 @@ def _parse_dt(val: Any) -> Optional[str]:
     return str(val)
 
 
-def _get_raw(log: dict) -> dict:
+def _sort_logs(logs: list[dict]) -> list[dict]:
+    """Trie les logs par date croissante."""
+    return sorted(logs, key=lambda x: x.get("date_mod") or x.get("date") or "")
+
+
+# ── Extracteurs ───────────────────────────────────────────────────────────────
+
+def _extract_creation_from_logs(logs: list[dict]) -> tuple[Optional[str], Optional[str]]:
     """
-    Les logs traités stockent les champs bruts GLPI dans la clé 'raw'.
-    Retourne le dict brut ou le log lui-même si 'raw' n'existe pas.
+    Cherche le premier log de création (linked_action=20).
+    Retourne (date, auteur).
     """
-    return log.get("raw", log)
+    for log in _sort_logs(logs):
+        if log.get("linked_action") == LINKED_ACTION_CREATE:
+            date_val = _parse_dt(log.get("date_mod") or log.get("date"))
+            acteur   = log.get("user_name") or None
+            return date_val, acteur
+    return None, None
+
+
+def _extract_validation_from_validations(validations: list[dict]) -> tuple[str, Optional[str], Optional[str]]:
+    """
+    Analyse la liste des TicketValidation GLPI.
+    Retourne (statut, date, acteur).
+    """
+    if not validations:
+        return "unknown", None, None
+
+    # La validation la plus récente fait foi
+    val = sorted(
+        validations,
+        key=lambda v: v.get("submission_date") or v.get("date") or "",
+    )[-1]
+
+    code = val.get("status") or val.get("validation_status")
+    try:
+        code = int(code)
+    except (TypeError, ValueError):
+        code = None
+
+    statut = VALIDATION_STATUS_MAP.get(code, "pending")
+    date_val = _parse_dt(
+        val.get("validation_date") or val.get("date") or val.get("submission_date")
+    )
+    acteur = val.get("_validator_name") or val.get("users_id_validate") or None
+    if isinstance(acteur, int):
+        acteur = f"User #{acteur}"
+
+    return statut, date_val, acteur
+
+
+def _extract_validation_from_logs(logs: list[dict]) -> tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Fallback : cherche dans les logs un changement de statut de validation.
+    Retourne (statut, date, acteur) ou (None, None, None) si non trouvé.
+
+    GLPI écrit typiquement :
+      id_search_option=52, old_value='En attente de validation',
+      new_value='Acceptée' | 'Refusée'
+    """
+    for log in _sort_logs(logs):
+        action   = log.get("linked_action")
+        search   = log.get("id_search_option")
+        new_val  = (log.get("new_value") or "").lower()
+        content  = (log.get("content")   or "").lower()
+
+        is_validation_field = (action == LINKED_ACTION_FIELD_CHANGE and search in (52, 55))
+        is_validation_text  = "validat" in content and ("accept" in content or "refus" in content)
+
+        if is_validation_field or is_validation_text:
+            if "refus" in new_val or "refus" in content:
+                statut = "refused"
+            elif "accept" in new_val or "accept" in content:
+                statut = "done"
+            else:
+                statut = "pending"
+
+            date_val = _parse_dt(log.get("date_mod") or log.get("date"))
+            acteur   = log.get("user_name") or None
+            return statut, date_val, acteur
+
+    return None, None, None
+
+
+# id_search_option GLPI pour les rôles utilisateur sur un ticket
+SEARCH_OPTION_REQUESTER  = 4   # Demandeur
+SEARCH_OPTION_ASSIGNEE   = 5   # Technicien / Acheteur assigné  ← attribution
+SEARCH_OPTION_OBSERVER   = 66  # Observateur
 
 
 def _extract_attribution_from_logs(logs: list[dict]) -> tuple[Optional[str], Optional[str]]:
     """
-    Cherche dans les logs le premier événement d'attribution :
-      - linked_action=15 (ajout d'un lien)
-      - itemtype_link contenant 'User'
+    Cherche dans les logs l'attribution à un acheteur.
+
+    Règle GLPI 11.0.6 confirmée :
+      linked_action = 15  (ajout d'un lien utilisateur)
+      id_search_option = 5  (rôle Technicien/Assigné = acheteur dans ce workflow)
+
+    Les logs linked_action=15 avec id_search_option=4 (Demandeur)
+    ou id_search_option=66 (Observateur) sont ignorés.
 
     Retourne (date, acteur_cible).
-    Les champs structurés sont dans log['raw'] (linked_action, itemtype_link...).
     """
-    for log in logs:
-        raw = _get_raw(log)
-        if raw.get("linked_action") == LINKED_ACTION_ADD_LINK:
-            itemtype = raw.get("itemtype_link") or ""
-            if "user" in itemtype.lower() or not itemtype:
-                date_val = (
-                    raw.get("date_mod")
-                    or raw.get("date")
-                    or raw.get("date_creation")
-                )
-                acteur = raw.get("new_value") or raw.get("user_name") or ""
-                return _parse_dt(date_val), acteur or None
+    for log in _sort_logs(logs):
+        raw = log.get("raw", log)
+        if raw.get("linked_action") != LINKED_ACTION_ADD_LINK:
+            continue
+        if raw.get("id_search_option") != SEARCH_OPTION_ASSIGNEE:
+            continue
+        # itemtype_link doit être User
+        itemtype = (raw.get("itemtype_link") or "").lower()
+        if itemtype and "user" not in itemtype:
+            continue
+
+        date_val = _parse_dt(
+            raw.get("date_mod") or raw.get("date") or log.get("date")
+        )
+        acteur = raw.get("new_value") or raw.get("user_name") or ""
+        return date_val, acteur or None
+
     return None, None
 
 
 def _extract_solution_from_logs(logs: list[dict]) -> tuple[Optional[str], Optional[str]]:
     """
-    Cherche dans les logs le premier événement d'ajout de solution :
-      - itemtype_link = 'ITILSolution'
-      - linked_action = 17  (ajout d'un sous-élément)
-      - ou le contenu textuel mentionne 'Solution'
-
+    Cherche dans les logs l'ajout d'une solution GLPI.
+    Critères (par priorité) :
+      - linked_action=17 ET itemtype_link='ITILSolution'
+      - linked_action=17 ET 'solution' dans le contenu
     Retourne (date, acteur).
     """
-    for log in logs:
-        raw = _get_raw(log)
-        itemtype = raw.get("itemtype_link") or ""
-        linked_action = raw.get("linked_action")
+    for log in _sort_logs(logs):
+        if log.get("linked_action") != LINKED_ACTION_ADD_ELEMENT:
+            continue
+        itemtype = (log.get("itemtype_link") or "").lower()
+        content  = (log.get("content")       or "").lower()
 
-        # itemtype_link = "ITILSolution" => c'est une solution
-        if itemtype == "ITILSolution":
-            date_val = (
-                raw.get("date_mod")
-                or raw.get("date")
-                or raw.get("date_creation")
-                or log.get("date")
-            )
-            acteur = raw.get("user_name") or log.get("author_name") or ""
-            return _parse_dt(date_val), acteur or None
-
-        # linked_action = 17 (ajout sous-élément) + contenu mentionnant "Solution"
-        if linked_action == LINKED_ACTION_ADD_SUBITEM:
-            mise_a_jour = log.get("mise_a_jour") or raw.get("new_value") or ""
-            if "solution" in (mise_a_jour or "").lower():
-                date_val = (
-                    raw.get("date_mod")
-                    or raw.get("date")
-                    or raw.get("date_creation")
-                    or log.get("date")
-                )
-                acteur = raw.get("user_name") or log.get("author_name") or ""
-                return _parse_dt(date_val), acteur or None
-
-        # Fallback : contenu textuel du log mentionnant "Solution"
-        content = log.get("content") or raw.get("new_value") or ""
-        champ = log.get("champ") or ""
-        if "solution" in (content or "").lower() or "solution" in (champ or "").lower():
-            date_val = (
-                raw.get("date_mod")
-                or raw.get("date")
-                or raw.get("date_creation")
-                or log.get("date")
-            )
-            acteur = raw.get("user_name") or log.get("author_name") or ""
-            return _parse_dt(date_val), acteur or None
+        if "itilsolution" in itemtype or "solution" in content:
+            date_val = _parse_dt(log.get("date_mod") or log.get("date"))
+            acteur   = log.get("user_name") or None
+            return date_val, acteur
 
     return None, None
 
 
+# ── Service principal ─────────────────────────────────────────────────────────
+
 class WorkflowService:
-    def __init__(self, settings: Settings):
-        self._s = settings
+    """
+    Reconstruit le workflow d'achat d'un ticket GLPI en 5 étapes.
+
+    Usage :
+        svc = WorkflowService(settings)
+        result = svc.build_workflow(ticket, logs, validations)
+    """
+
+    # Statuts ticket considérés comme "résolus"
+    RESOLVED_STATUSES = {STATUS_RESOLVED, STATUS_CLOSED}
+
+    STATUS_LABELS = {
+        1: "Nouveau",
+        2: "En cours (assigné)",
+        3: "En cours (planifié)",
+        4: "En attente",
+        5: "Résolu",
+        6: "Clos",
+    }
 
     def build_workflow(
         self,
@@ -142,22 +235,21 @@ class WorkflowService:
         validations: list[dict],
     ) -> dict:
         """
-        Construit la structure des 5 étapes à partir des données disponibles.
+        Construit la structure des 5 étapes.
 
         Args:
-            ticket      : ticket brut (dict tel que retourné par le repo)
-            logs        : liste des entrées d'historique (get_ticket_history)
+            ticket      : ticket brut (dict retourné par le repo GLPI)
+            logs        : liste des entrées d'historique
             validations : liste des TicketValidation GLPI (peut être vide)
         """
         etapes = [
             self._etape_creation(ticket, logs),
-            self._etape_validation(ticket, validations),
+            self._etape_validation(ticket, logs, validations),
             self._etape_attribution(ticket, logs),
-            self._etape_solution(ticket, logs),
+            self._etape_solution(logs),
             self._etape_resolution(ticket),
         ]
 
-        # Statut global du workflow
         statuts = [e["statut"] for e in etapes]
         if all(s == "done" for s in statuts):
             statut_global = "done"
@@ -167,155 +259,143 @@ class WorkflowService:
             statut_global = "in_progress"
 
         return {
-            "ticket_id": ticket.get("id"),
-            "statut_global": statut_global,
-            "etapes": etapes,
+            "ticket_id":      ticket.get("id"),
+            "statut_global":  statut_global,
+            "etapes":         etapes,
         }
 
     # ── Étape 1 : Création ────────────────────────────────────────
     def _etape_creation(self, ticket: dict, logs: list[dict]) -> dict:
-        date_creation = _parse_dt(ticket.get("date"))
+        date_log, acteur_log = _extract_creation_from_logs(logs)
 
-        # Auteur : chercher le premier log (linked_action=20) ou fallback
-        acteur = None
-        for log in sorted(logs, key=lambda x: x.get("date") or ""):
-            raw = _get_raw(log)
-            if raw.get("linked_action") == LINKED_ACTION_CREATE:
-                acteur = raw.get("user_name") or log.get("author_name") or None
-                break
-            if not acteur and raw.get("user_name"):
-                acteur = raw.get("user_name") or None
-                break
-
-        # Fallback : nom du demandeur extrait lors de l'enrichissement
-        if not acteur:
-            acteur = ticket.get("_buyer_name") or ticket.get("_requester_name")
+        date_creation = date_log or _parse_dt(ticket.get("date"))
+        acteur = (
+            acteur_log
+            or ticket.get("_buyer_name")
+            or ticket.get("_requester_name")
+        )
 
         return {
-            "etape": "creation",
-            "label": "Création",
+            "etape":  "creation",
+            "label":  "Création",
             "statut": "done" if date_creation else "unknown",
-            "date": date_creation,
+            "date":   date_creation,
             "acteur": acteur,
             "detail": None,
         }
 
     # ── Étape 2 : Validation ──────────────────────────────────────
-    def _etape_validation(self, ticket: dict, validations: list[dict]) -> dict:
-        if not validations:
+    def _etape_validation(
+        self,
+        ticket: dict,
+        logs: list[dict],
+        validations: list[dict],
+    ) -> dict:
+        # Source 1 : table TicketValidation
+        if validations:
+            statut, date_val, acteur = _extract_validation_from_validations(validations)
             return {
-                "etape": "validation",
-                "label": "Validation",
-                "statut": "unknown",
-                "date": None,
-                "acteur": None,
-                "detail": "Aucune validation GLPI enregistrée",
-            }
-
-        # Prendre la validation la plus récente
-        val = sorted(
-            validations,
-            key=lambda v: v.get("submission_date") or v.get("date") or "",
-        )[-1]
-
-        # Ne PAS se fier à status=2 si validation_date est null :
-        # GLPI met auto-implement status=2 dès la soumission quand le
-        # créateur est aussi le validateur → ce n'est pas une vraie validation
-        validation_date = _parse_dt(val.get("validation_date") or val.get("date"))
-        if not validation_date:
-            # Pas de validation_date → la validation est en attente
-            # (même si GLPI a auto-mis status=2 par défaut)
-            return {
-                "etape": "validation",
-                "label": "Validation",
-                "statut": "pending",
-                "date": _parse_dt(val.get("submission_date")),
-                "acteur": None,
-                "detail": "En attente de validation",
-            }
-
-        val_status_code = val.get("status") or val.get("validation_status")
-        try:
-            val_status_code = int(val_status_code)
-        except (TypeError, ValueError):
-            val_status_code = None
-
-        statut = VALIDATION_STATUS_MAP.get(val_status_code, "pending")
-        acteur = val.get("_validator_name") or val.get("users_id_validate") or None
-        if isinstance(acteur, int):
-            acteur = f"User #{acteur}"
-
-        commentaire = val.get("comment_validation") or val.get("comment") or None
-
-        return {
-            "etape": "validation",
-            "label": "Validation",
-            "statut": statut,
-            "date": validation_date,
-            "acteur": acteur,
-            "detail": commentaire,
-        }
-
-    # ── Étape 3 : Attribution ─────────────────────────────────────
-    def _etape_attribution(self, ticket: dict, logs: list[dict]) -> dict:
-        # Priorité 1 : chercher dans les logs l'événement d'attribution
-        date_attr, acteur_log = _extract_attribution_from_logs(logs)
-
-        # Si les logs contiennent une attribution utilisateur, l'étape est validée
-        if date_attr and acteur_log:
-            return {
-                "etape": "attribution",
-                "label": "Attribution",
-                "statut": "done",
-                "date": date_attr,
-                "acteur": acteur_log,
-                "detail": None,
-            }
-
-        # Priorité 2 : fallback sur le champ users_id_assign + _buyer_name
-        uid_assign = ticket.get("users_id_assign") or ticket.get("users_id_assignments_id")
-        if uid_assign:
-            acteur = acteur_log or ticket.get("_buyer_name") or f"User #{uid_assign}"
-            return {
-                "etape": "attribution",
-                "label": "Attribution",
-                "statut": "done",
-                "date": date_attr,
+                "etape":  "validation",
+                "label":  "Validation",
+                "statut": statut,
+                "date":   date_val,
                 "acteur": acteur,
                 "detail": None,
             }
 
-        # Aucune attribution détectée
+        # Source 2 : logs d'historique
+        statut, date_val, acteur = _extract_validation_from_logs(logs)
+        if statut:
+            return {
+                "etape":  "validation",
+                "label":  "Validation",
+                "statut": statut,
+                "date":   date_val,
+                "acteur": acteur,
+                "detail": None,
+            }
+
+        # Source 3 : global_validation du ticket
+        global_val = ticket.get("global_validation")
+        if global_val not in (None, 0, "", "0"):
+            try:
+                statut = VALIDATION_STATUS_MAP.get(int(global_val), "pending")
+            except (TypeError, ValueError):
+                statut = "unknown"
+            return {
+                "etape":  "validation",
+                "label":  "Validation",
+                "statut": statut,
+                "date":   None,
+                "acteur": None,
+                "detail": None,
+            }
+
         return {
-            "etape": "attribution",
-            "label": "Attribution",
+            "etape":  "validation",
+            "label":  "Validation",
+            "statut": "unknown",
+            "date":   None,
+            "acteur": None,
+            "detail": "Aucune validation GLPI enregistrée",
+        }
+
+    # ── Étape 3 : Attribution ─────────────────────────────────────
+    def _etape_attribution(self, ticket: dict, logs: list[dict]) -> dict:
+        # Priorité 1 : logs (source de vérité)
+        # Règle GLPI 11.0.6 : linked_action=15 + id_search_option=5 = acheteur assigné
+        date_attr, acteur_log = _extract_attribution_from_logs(logs)
+        if date_attr and acteur_log:
+            return {
+                "etape":  "attribution",
+                "label":  "Attribution",
+                "statut": "done",
+                "date":   date_attr,
+                "acteur": acteur_log,
+                "detail": None,
+            }
+
+        # Priorité 2 : fallback sur users_id_assign du ticket
+        uid_assign = ticket.get("users_id_assign") or 0
+        acheteur   = ticket.get("_buyer_name")
+        if uid_assign and uid_assign != 0:
+            return {
+                "etape":  "attribution",
+                "label":  "Attribution",
+                "statut": "done",
+                "date":   None,
+                "acteur": acheteur or f"User #{uid_assign}",
+                "detail": None,
+            }
+
+        return {
+            "etape":  "attribution",
+            "label":  "Attribution",
             "statut": "pending",
-            "date": None,
+            "date":   None,
             "acteur": None,
             "detail": None,
         }
 
-    # ── Étape 4 : Solution ────────────────────────────────────────
-    def _etape_solution(self, ticket: dict, logs: list[dict]) -> dict:
-        """Détecte si une solution a été ajoutée au ticket."""
-        date_sol, acteur_sol = _extract_solution_from_logs(logs)
+        # ── Étape 4 : Solution ────────────────────────────────────────
+    def _etape_solution(self, logs: list[dict]) -> dict:
+        date_sol, acteur = _extract_solution_from_logs(logs)
 
         if date_sol:
             return {
-                "etape": "solution",
-                "label": "Solution",
+                "etape":  "solution",
+                "label":  "Solution",
                 "statut": "done",
-                "date": date_sol,
-                "acteur": acteur_sol,
+                "date":   date_sol,
+                "acteur": acteur,
                 "detail": None,
             }
 
-        # Pas de solution détectée dans les logs
         return {
-            "etape": "solution",
-            "label": "Solution",
+            "etape":  "solution",
+            "label":  "Solution",
             "statut": "pending",
-            "date": None,
+            "date":   None,
             "acteur": None,
             "detail": None,
         }
@@ -323,27 +403,24 @@ class WorkflowService:
     # ── Étape 5 : Résolution ──────────────────────────────────────
     def _etape_resolution(self, ticket: dict) -> dict:
         status = ticket.get("status", 0)
-        is_resolved = status in self._s.resolved_statuses
 
-        if is_resolved:
-            date_res = _parse_dt(
-                ticket.get("closedate") or ticket.get("solvedate")
-            )
-            status_label = self._s.status_map.get(status, "Résolu")
+        if status in self.RESOLVED_STATUSES:
+            date_res     = _parse_dt(ticket.get("solvedate") or ticket.get("closedate"))
+            status_label = self.STATUS_LABELS.get(status, "Résolu")
             return {
-                "etape": "resolution",
-                "label": "Résolution",
+                "etape":  "resolution",
+                "label":  "Résolution",
                 "statut": "done",
-                "date": date_res,
+                "date":   date_res,
                 "acteur": ticket.get("_buyer_name"),
                 "detail": status_label,
             }
 
         return {
-            "etape": "resolution",
-            "label": "Résolution",
+            "etape":  "resolution",
+            "label":  "Résolution",
             "statut": "pending",
-            "date": None,
+            "date":   None,
             "acteur": None,
-            "detail": self._s.status_map.get(status, "En cours"),
+            "detail": self.STATUS_LABELS.get(status, "En cours"),
         }

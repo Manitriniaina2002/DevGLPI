@@ -159,7 +159,7 @@ def ticket_workflow(
     ticket_id: int,
     dates: tuple = Depends(get_date_range),
     repo: TicketRepository = Depends(_get_repo),
-    svc: WorkflowService = Depends(lambda settings=Depends(get_settings): WorkflowService(settings)),
+    svc: WorkflowService = Depends(lambda: WorkflowService()),
     settings: Settings = Depends(get_settings),
     user: Optional[CurrentUser] = Depends(get_current_user_optional),
 ):
