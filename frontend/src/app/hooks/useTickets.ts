@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { getApiBase } from './apiBase'
 
 export type TicketStatusRaw = string
 
@@ -32,8 +33,6 @@ type UseTicketsParams = {
 }
 
 // Next.js: l'API backend tourne à http://localhost:9000
-const API_BASE = 'http://localhost:9000'
-
 export function useTickets(params: UseTicketsParams = { per_page: 100 }) {
   const { year } = params
 
@@ -56,6 +55,7 @@ export function useTickets(params: UseTicketsParams = { per_page: 100 }) {
       setError(null)
 
       try {
+        const API_BASE = getApiBase()
         const url = `${API_BASE}/api/dashboard/summary${query ? `?${query}` : ''}`
 
         const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null

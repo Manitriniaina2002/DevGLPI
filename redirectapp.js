@@ -1,4 +1,4 @@
-(function () {
+﻿(function () {
   try { console.log("[redirectapp] script loaded"); } catch (e) {}
 
   var buttonClass = "redirectapp-button";
@@ -109,3 +109,4 @@
     jQuery(document).on("tabsload", function () { addRedirectButton(); });
   }
 })();
+

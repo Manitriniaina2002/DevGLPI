@@ -23,9 +23,7 @@ if (!$loggedIn) {
     exit;
 }
 
-// CORS: allow local frontend to call this endpoint directly during development
-// Adjust or remove in production for security.
-header('Access-Control-Allow-Origin: http://localhost:3000');
+header('Access-Control-Allow-Origin: ' . (defined('REDIRECTAPP_TARGET_URL') ? rtrim(REDIRECTAPP_TARGET_URL, '/') : 'http://localhost:3000'));
 header('Access-Control-Allow-Credentials: true');
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     header('Access-Control-Allow-Methods: GET, POST, OPTIONS');
@@ -47,8 +45,6 @@ if ($userId) {
     $user = new User();
     if ($user->getFromDB($userId)) {
         $fields = $user->fields;
-        // `api_token` in GLPI is stored as a hash, not the raw token value.
-        // We must not use it directly for user_token exchange.
         $candidateFields = ['token', 'personal_token', 'cookie_token', 'external_token', 'authtoken'];
         foreach ($candidateFields as $field) {
             $tokenCandidates[$field] = $fields[$field] ?? null;
@@ -61,16 +57,6 @@ if ($userId) {
     }
 }
 
-header('Content-Type: application/json; charset=utf-8');
-// Continue to generate one_time token below and output a single JSON response
-// Generate an HMAC-signed one-time token to allow the external app
-// to authenticate without reading the GLPI API token (which may be hashed).
-// The plugin will look for a secret in env `GLPI_PLUGIN_SECRET` or in
-// a file `../secret.key` inside the plugin directory. If a secret is
-// available and a clear token exists, produce `one_time` = base64url(payload).sig
-// where payload contains uid, login, full_name, token_field and expiry.
-
-// (Note: Clients must set the same secret in backend as `GLPI_PLUGIN_SECRET`.)
 $one_time = null;
 $secret = getenv('GLPI_PLUGIN_SECRET') ?: '';
 if (!$secret) {
@@ -94,7 +80,6 @@ if (!empty($secret) && !empty($token)) {
     $one_time = $b . '.' . $sig;
 }
 
-// Re-output including one_time when available
 header('Content-Type: application/json; charset=utf-8');
 echo json_encode([
     'user_id' => $userId,

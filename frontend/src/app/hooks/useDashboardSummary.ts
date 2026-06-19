@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { getApiBase } from './apiBase'
 
 export type DashboardSummary = {
   period?: { from?: string | null; to?: string | null }
@@ -30,12 +31,12 @@ export type DashboardSummary = {
 
 type UseDashboardSummaryParams = {
   year?: number
+  from?: string
+  to?: string
 }
 
-const API_BASE = 'http://localhost:9000'
-
 export function useDashboardSummary(params: UseDashboardSummaryParams = {}) {
-  const { year } = params
+  const { year, from, to } = params
 
   const [summary, setSummary] = useState<DashboardSummary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -44,8 +45,10 @@ export function useDashboardSummary(params: UseDashboardSummaryParams = {}) {
   const query = useMemo(() => {
     const q = new URLSearchParams()
     if (year) q.set('year', String(year))
+    if (from) q.set('date_from', from)
+    if (to) q.set('date_to', to)
     return q.toString()
-  }, [year])
+  }, [year, from, to])
 
   useEffect(() => {
     let cancelled = false
@@ -55,6 +58,7 @@ export function useDashboardSummary(params: UseDashboardSummaryParams = {}) {
       setError(null)
 
       try {
+        const API_BASE = getApiBase()
         const url = `${API_BASE}/api/dashboard/summary${query ? `?${query}` : ''}`
         const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null
         const res = await fetch(url, {

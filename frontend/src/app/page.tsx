@@ -1,13 +1,23 @@
-﻿"use client"
+﻿'use client'
 export const dynamic = 'force-dynamic'
 
-import { useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import { Suspense, useEffect } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { getApiBase } from '@/app/hooks/apiBase'
 
 export default function HomePage() {
+  return (
+    <Suspense fallback={<AuthLoading />}>
+      <HomePageContent />
+    </Suspense>
+  )
+}
+
+function HomePageContent() {
   const router = useRouter()
-  const glpiToken = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('glpi_token') : null
-  const oneTime = typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('one_time') : null
+  const searchParams = useSearchParams()
+  const glpiToken = searchParams.get('glpi_token')
+  const oneTime = searchParams.get('one_time')
 
   useEffect(() => {
     const authenticate = async () => {
@@ -23,16 +33,10 @@ export default function HomePage() {
         // If GLPI token or one-time token is provided, exchange it for JWT
         if (glpiToken || oneTime) {
           try {
-            let apiBase = process.env.NEXT_PUBLIC_API_URL ?? ''
-            if (typeof window !== 'undefined') {
-              // In local browser development, the backend is on localhost:9000
-              if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
-                apiBase = 'http://localhost:9000'
-              }
-            }
-            const url = apiBase ? `${apiBase.replace(/\/$/, '')}/api/auth/login` : '/api/auth/login'
+            const url = `${getApiBase()}/api/auth/login`
             const payload = { user_token: glpiToken, one_time_token: oneTime }
             console.log('[auth] sending payload', payload)
+
             const response = await fetch(url, {
               method: 'POST',
               headers: {
@@ -43,6 +47,7 @@ export default function HomePage() {
 
             const responseBody = await response.text()
             console.log('[auth] response status', response.status, 'body', responseBody)
+
             if (response.ok) {
               const data = JSON.parse(responseBody)
               localStorage.setItem('auth_token', data.access_token || '')
@@ -51,7 +56,6 @@ export default function HomePage() {
               localStorage.setItem('user_full_name', data.full_name)
               localStorage.setItem('user_role', data.role)
 
-              // Redirect to dashboard after successful auth
               router.replace('/dashboard')
               return
             } else {
@@ -73,12 +77,16 @@ export default function HomePage() {
     authenticate()
   }, [glpiToken, oneTime, router])
 
+  return <AuthLoading />
+}
+
+function AuthLoading() {
   return (
-    <div className="flex items-center justify-center min-h-screen">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold mb-4">GLPI Dashboard</h1>
-        <p className="text-neutral-600">Authentification en cours...</p>
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="text-center">
+          <h1 className="text-2xl font-bold mb-4">GLPI Dashboard</h1>
+          <p className="text-neutral-600">Authentification en cours...</p>
+        </div>
       </div>
-    </div>
-  )
+    )
 }
