@@ -69,23 +69,33 @@ if (!empty($secret) && !empty($token)) {
     $login = $fields['name'] ?? '';
     $full_name = trim(($fields['firstname'] ?? '') . ' ' . ($fields['realname'] ?? ''));
     $payload = json_encode([
-        'uid' => (int)$userId,
-        'login' => $login,
-        'full_name' => $full_name,
+        'uid'         => (int)$userId,
+        'login'       => $login,
+        'full_name'   => $full_name,
         'token_field' => $tokenField,
-        'exp' => time() + 30,
+        'exp'         => time() + 30,
     ]);
     $b = rtrim(strtr(base64_encode($payload), '+/', '-_'), '=');
     $sig = hash_hmac('sha256', $b, $secret);
     $one_time = $b . '.' . $sig;
 }
 
+// Charger la config si pas encore chargée
+if (!defined('REDIRECTAPP_TARGET_URL')) {
+    $config_file = __DIR__ . '/../config.php';
+    if (file_exists($config_file)) include_once($config_file);
+}
+
 header('Content-Type: application/json; charset=utf-8');
 echo json_encode([
-    'user_id' => $userId,
-    'token' => $token,
+    'user_id'     => $userId,
+    'token'       => $token,
     'token_field' => $tokenField,
-    'tokens' => $tokenCandidates,
-    'one_time' => $one_time,
+    'tokens'      => $tokenCandidates,
+    'one_time'    => $one_time,
+    'config'      => [
+        'target_url'   => defined('REDIRECTAPP_TARGET_URL')   ? REDIRECTAPP_TARGET_URL   : 'http://localhost:3000/',
+        'button_label' => defined('REDIRECTAPP_BUTTON_LABEL') ? REDIRECTAPP_BUTTON_LABEL : 'Rapports détaillés',
+    ],
 ]);
 exit;

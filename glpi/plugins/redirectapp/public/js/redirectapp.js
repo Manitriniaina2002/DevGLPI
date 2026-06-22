@@ -2,8 +2,10 @@
   try { console.log("[redirectapp] script loaded"); } catch (e) {}
 
   var buttonClass = "redirectapp-button";
-  var buttonUrl = window.REDIRECTAPP_URL || "http://localhost:3000/";
-  var buttonLabel = window.REDIRECTAPP_LABEL || "Rapports détaillés";
+
+  // Valeurs par défaut — seront écrasées par la réponse du serveur
+  var buttonUrl   = "http://localhost:3000/";
+  var buttonLabel = "Rapports détaillés";
 
   function addRedirectButton() {
     if (document.querySelector("." + buttonClass)) return;
@@ -26,7 +28,6 @@
       }
     });
 
-    // Injecter AVANT la barre de recherche dans le header
     var searchDiv = document.querySelector("header.navbar .ms-lg-auto");
     if (searchDiv) {
       var wrapper = document.createElement("div");
@@ -34,7 +35,6 @@
       wrapper.appendChild(button);
       searchDiv.parentNode.insertBefore(wrapper, searchDiv);
     } else {
-      // Fallback fixed
       button.style.position = "fixed";
       button.style.top = "14px";
       button.style.right = "200px";
@@ -42,7 +42,7 @@
       document.body.appendChild(button);
     }
 
-    loadUserToken(button, buttonLabel);
+    loadUserToken(button);
   }
 
   function getPluginBasePath() {
@@ -56,12 +56,13 @@
     return "";
   }
 
-  function loadUserToken(button, label) {
+  function loadUserToken(button) {
     var pluginBase = getPluginBasePath();
     if (!pluginBase) {
       pluginBase = window.location.origin + "/plugins/redirectapp";
     }
     var tokenUrl = pluginBase.replace(/\/$/, "") + "/front/get_user_token.php";
+
     fetch(tokenUrl, {
       credentials: "same-origin",
       headers: { "Accept": "application/json" }
@@ -71,6 +72,12 @@
         return response.json();
       })
       .then(function (data) {
+        // Lire la config serveur si disponible
+        if (data && data.config) {
+          if (data.config.target_url)   buttonUrl   = data.config.target_url;
+          if (data.config.button_label) buttonLabel = data.config.button_label;
+        }
+
         if (data && (data.one_time || data.token)) {
           var separator = buttonUrl.indexOf("?") === -1 ? "?" : "&";
           if (data.one_time) {
@@ -82,7 +89,7 @@
           button.dataset.tokenReady = "true";
           button.style.pointerEvents = "";
           button.style.opacity = "";
-          button.textContent = label;
+          button.textContent = buttonLabel;
         } else {
           button.textContent = "Token introuvable";
           button.style.opacity = "0.6";

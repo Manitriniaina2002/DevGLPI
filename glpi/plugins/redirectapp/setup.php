@@ -45,13 +45,7 @@ function plugin_init_redirectapp() {
     }
 
     $PLUGIN_HOOKS['add_javascript']['redirectapp'] = 'public/js/redirectapp.js';
-    $PLUGIN_HOOKS['add_css']['redirectapp'] = 'public/css/redirectapp.css';
-
-    // Injecter les variables dans la page
-    echo '<script>
-        window.REDIRECTAPP_URL = "' . addslashes(REDIRECTAPP_TARGET_URL) . '";
-        window.REDIRECTAPP_LABEL = "' . addslashes(REDIRECTAPP_BUTTON_LABEL) . '";
-    </script>';
+    $PLUGIN_HOOKS['add_css']['redirectapp']        = 'public/css/redirectapp.css';
 }
 
 function plugin_redirectapp_check_config($verbose = false) {
