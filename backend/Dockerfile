@@ -1,5 +1,4 @@
 # backend/Dockerfile
-# Build context : ./backend  (cf. docker-compose.yml)
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -7,9 +6,9 @@ WORKDIR /app
 ENV PYTHONIOENCODING=utf-8
 ENV LANG=C.UTF-8
 
-# Dépendances système minimales
-# Le backend n’a pas besoin de dépendances système additionnelles pour l’exécution.
-# Nous évitons ici l’installation de curl pour réduire les dépendances réseau lors du build.
+# curl requis pour le HEALTHCHECK Docker
+RUN apt-get update && apt-get install -y --no-install-recommends curl \
+    && rm -rf /var/lib/apt/lists/*
 
 # Dépendances Python
 COPY requirements.txt .

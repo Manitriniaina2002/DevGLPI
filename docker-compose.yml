@@ -1,13 +1,85 @@
+version: "3.9"
+
+# ══════════════════════════════════════════════════════════════════
+#  Dashboard Achat GLPI — docker-compose.yml
+# ══════════════════════════════════════════════════════════════════
+
 services:
+
+  # ── Backend FastAPI ─────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dashbord-achat-backend
+    restart: unless-stopped
+    ports:
+      - "9000:8000"
+    environment:
+      - USE_MOCK_DATA=${USE_MOCK_DATA:-true}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://dashboard:dashboard@postgres:5432/dashboard_achat}
+      - GLPI_BASE_URL=${GLPI_BASE_URL:-http://nginx}
+      - GLPI_APP_TOKEN=${GLPI_APP_TOKEN:-}
+      - GLPI_USER_TOKEN=${GLPI_USER_TOKEN:-}
+      - GLPI_PURCHASE_CATEGORY_ID=${GLPI_PURCHASE_CATEGORY_ID:-0}
+      - REDIS_URL=redis://redis:6379
+      - REDIS_TTL_TICKET_HISTORY=${REDIS_TTL_TICKET_HISTORY:-300}
+      - REDIS_TTL_PURCHASE_TICKETS=${REDIS_TTL_PURCHASE_TICKETS:-120}
+      - REDIS_TTL_ASSIGNEES_MAP=${REDIS_TTL_ASSIGNEES_MAP:-120}
+      - REDIS_TTL_USERS=${REDIS_TTL_USERS:-1800}
+      - REDIS_TTL_PROJECTS=${REDIS_TTL_PROJECTS:-1800}
+      - REDIS_TTL_VALIDATIONS=${REDIS_TTL_VALIDATIONS:-300}
+      - CORS_ORIGINS=${CORS_ORIGINS:-["http://localhost:3000","http://127.0.0.1:3000"]}
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+      - GLPI_PLUGIN_SECRET=${GLPI_PLUGIN_SECRET:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    networks:
+      - dashboard-net
+
+  # ── Redis Cache ─────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: dashbord-achat-redis
+    restart: unless-stopped
+    # Pas de port exposé en dehors du réseau Docker (sécurité)
+    # Décommenter la ligne ci-dessous si besoin d'accès externe (dev)
+    # ports:
+    #   - "6379:6379"
+    command: >
+      redis-server
+      --maxmemory 128mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - dashboard-net
+
+  # ── PostgreSQL ──────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
     container_name: dashbord-achat-postgres
+    restart: unless-stopped
+    ports:
+      - "5433:5432"
     environment:
-      POSTGRES_DB: dashboard_achat
       POSTGRES_USER: dashboard
       POSTGRES_PASSWORD: dashboard
-    ports:
-      - "5432:5432"
+      POSTGRES_DB: dashboard_achat
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -15,67 +87,14 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
-
-  backend:
-    build:
-      context: ./backend
-    image: dashbord-achat-backend
-    container_name: dashbord-achat-backend
-    ports:
-      - "9000:8000"
-    environment:
-      USE_MOCK_DATA: "${USE_MOCK_DATA:-false}"
-      CORS_ORIGINS: "${CORS_ORIGINS:-[\"http://localhost:3000\",\"http://frontend:3000\"]}"
-      DATABASE_URL: postgresql://dashboard:dashboard@postgres:5432/dashboard_achat
-      GLPI_BASE_URL: "${GLPI_BASE_URL:-http://nginx}"
-      GLPI_APP_TOKEN: "${GLPI_APP_TOKEN:-}"
-      GLPI_USER_TOKEN: "${GLPI_USER_TOKEN:-}"
-      GLPI_PURCHASE_CATEGORY_ID: "${GLPI_PURCHASE_CATEGORY_ID:-0}"
-      GLPI_PLUGIN_SECRET: "${GLPI_PLUGIN_SECRET:-}"
-    depends_on:
-      postgres:
-        condition: service_healthy
     networks:
-      - default
-      - glpi-frontend
-    restart: unless-stopped
+      - dashboard-net
 
-  # ── Frontend Next.js ──────────────────────────────────────────────
-  frontend:
-    build:
-      context: ./frontend
-      args:
-        # Le frontend appelle le backend via le proxy Next.js (rewrites)
-        # En interne Docker, le backend est accessible sur http://backend:8000
-        NEXT_PUBLIC_API_URL: http://backend:8000
-    image: dashbord-achat-frontend
-    container_name: dashbord-achat-frontend
-    ports:
-      - "3000:3000"
-    environment:
-      # URL publique du backend (accessible depuis le navigateur)
-      # En prod, mettre l'URL publique de votre serveur
-      NEXT_PUBLIC_API_URL: "${NEXT_PUBLIC_API_URL:-http://localhost:9000}"
-      # URL publique de GLPI (utilisée par le frontend pour appeler le plugin)
-      NEXT_PUBLIC_GLPI_URL: "${NEXT_PUBLIC_GLPI_URL:-http://nginx}"
-      NODE_ENV: production
-    depends_on:
-      - backend
-    networks:
-      - default
-    restart: unless-stopped
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-
+# ── Volumes ─────────────────────────────────────────────────────
 volumes:
   postgres_data:
 
+# ── Réseau interne ───────────────────────────────────────────────
 networks:
-  default:
-  glpi-frontend:
-    external: true
-    name: glpi-frontend
+  dashboard-net:
+    driver: bridge
