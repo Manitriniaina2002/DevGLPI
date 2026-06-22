@@ -3,12 +3,14 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle,
+  Archive,
   BarChart3,
   CalendarDays,
   CheckCircle2,
   Circle,
   Clock3,
   Filter,
+  FileText,
   RotateCcw,
   Search,
   ShieldCheck,
@@ -18,17 +20,29 @@ import {
 } from 'lucide-react'
 import { Button } from '@/app/components/ui/button'
 import { Card, CardContent, CardHeader } from '@/app/components/ui/card'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/app/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/app/components/ui/dialog'
 import { Input } from '@/app/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/app/components/ui/select'
+import { Skeleton } from '@/app/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/app/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/app/components/ui/tooltip'
 import { useHeaderActions } from '@/app/(authenticated)/header-actions-context'
 import { useDashboardSummary } from '@/app/hooks/useDashboardSummary'
 import { useTicketsList } from '@/app/hooks/useTicketsList'
+import { getApiBase } from '@/app/hooks/apiBase'
+import { isTicketRejected, resolveTicketBusinessStatus, type TicketBusinessStatus } from '@/app/lib/ticket-business-status'
 
 type QuickTicketFilter = 'all' | 'rejected' | 'late'
-type TimelineStepState = 'done' | 'current' | 'pending'
+type TimelineStepState = 'done' | 'current' | 'pending' | 'rejected'
 type PerformanceSort = 'score' | 'avg' | 'count' | 'sla'
+const WORKFLOW_SOURCE_FLAG = '__workflow_source'
+const WORKFLOW_TIMELINE_LABELS = [
+  { key: 'creation', label: 'Création de la demande' },
+  { key: 'validation', label: 'Validation' },
+  { key: 'assignation', label: 'Assignation à un acheteur' },
+  { key: 'achat', label: 'Traitement' },
+  { key: 'cloture', label: 'Livraison' },
+]
 
 interface DashboardTicket {
   id: string
@@ -43,17 +57,25 @@ interface DashboardTicket {
   dateCreation: string
   dateCreationRaw?: unknown
   dateEcheance: string
+  dateEcheanceRaw?: unknown
   dateResolutionRaw?: unknown
   isLate: boolean
   raw: Record<string, unknown>
 }
 
+type WorkflowData = Record<string, unknown>
+
 interface TimelineStep {
   key: string
+  renderKey?: string
   label: string
   date: string
   user: string
+  assignedBuyer?: string
+  detail?: string
   state: TimelineStepState
+  duration: string | null
+  durationMinutes: number | null
 }
 
 interface StageMetric {
@@ -103,13 +125,21 @@ interface ProcessAnalysis {
 }
 
 interface WorkflowKpi {
-  key: 'to_validate' | 'to_assign' | 'to_buy' | 'received'
+  key: 'to_validate' | 'to_assign' | 'to_buy' | 'received' | 'rejected'
   label: string
   description: string
   count: number
-  tone: 'green' | 'blue' | 'amber' | 'slate'
+  tone: 'green' | 'blue' | 'amber' | 'red' | 'slate'
   progressWeight: number
   icon: typeof ShieldCheck
+}
+
+interface WorkflowProgressSummary {
+  percentage: number
+  count: number
+  total: number
+  detail: string
+  suffix: string
 }
 
 const ticketPageSizeOptions = [10, 25, 50, 100] as const
@@ -127,7 +157,11 @@ export default function DashboardPage() {
   const [quickFilter, setQuickFilter] = useState<QuickTicketFilter>('all')
   const [search, setSearch] = useState('')
   const [selectedTicket, setSelectedTicket] = useState<DashboardTicket | null>(null)
-  const [activeDashboardTab, setActiveDashboardTab] = useState('tickets')
+  const [selectedWorkflow, setSelectedWorkflow] = useState<WorkflowData | null>(null)
+  const [workflowLoading, setWorkflowLoading] = useState(false)
+  const [workflowError, setWorkflowError] = useState<string | null>(null)
+  const [workflowTicketStatuses, setWorkflowTicketStatuses] = useState<Record<string, TicketBusinessStatus>>({})
+  const [activeDashboardTab, setActiveDashboardTab] = useState('process')
   const [ticketPage, setTicketPage] = useState(1)
   const [ticketPageSize, setTicketPageSize] = useState<(typeof ticketPageSizeOptions)[number]>(25)
   const [projectOptions, setProjectOptions] = useState<string[]>([])
@@ -149,31 +183,64 @@ export default function DashboardPage() {
     acheteur: buyer === 'all' ? undefined : buyer,
     late_only: quickFilter === 'late' ? true : undefined,
   })
+  const { tickets: scopedApiTickets } = useTicketsList({
+    per_page: 1000,
+    fetchAll: true,
+    from: dateFrom || undefined,
+    to: dateTo || undefined,
+    projet: project === 'all' ? undefined : project,
+    acheteur: buyer === 'all' ? undefined : buyer,
+  })
 
   const tickets = useMemo<DashboardTicket[]>(
-    () =>
-      apiTickets.map((ticket: any) => ({
-        id: String(ticket.id ?? `${ticket.name ?? 'ticket'}-${ticket.date_creation ?? 'na'}`),
-        reference: String(ticket.id ?? '-'),
-        name: String(ticket.name ?? ticket.titre ?? ticket.title ?? 'Ticket sans nom'),
-        projet: String(ticket.projet ?? ticket.project ?? 'Non renseigné'),
-        acheteur: String(ticket.acheteur ?? ticket.assignedTo ?? 'Non renseigné'),
-        statut: String(ticket.status_label ?? ticket.statut ?? ticket.status ?? '-'),
-        statutCode: Number(ticket.status ?? 0),
-        priorite: normalizePriority(ticket.priority ?? ticket.priorite),
-        prioriteCode: Number(ticket.priority ?? 0),
-        dateCreation: formatDateFr(ticket.date_creation ?? ticket.dateCreation ?? ticket.createdAt ?? ticket.date),
-        dateCreationRaw: ticket.date_creation ?? ticket.dateCreation ?? ticket.createdAt ?? ticket.date,
-        dateEcheance: formatDateFr(ticket.time_to_resolve ?? ticket.date_echeance ?? ticket.dateEcheance ?? ticket.deadline ?? ticket.echeance),
-        dateResolutionRaw: ticket.date_resolution ?? ticket.dateResolution ?? ticket.closedate ?? ticket.solvedate,
-        isLate: Boolean(ticket.is_late ?? ticket.enRetard),
-        raw: ticket as Record<string, unknown>,
-      })),
+    () => apiTickets.map((ticket: any) => mapDashboardTicket(ticket)),
     [apiTickets],
+  )
+  const scopedTickets = useMemo<DashboardTicket[]>(
+    () => scopedApiTickets.map((ticket: any) => mapDashboardTicket(ticket)),
+    [scopedApiTickets],
   )
 
   const projects = useMemo(() => uniqueSorted(tickets.map((ticket) => ticket.projet)), [tickets])
   const buyers = useMemo(() => uniqueSorted(tickets.map((ticket) => ticket.acheteur)), [tickets])
+  useEffect(() => {
+    const candidates = scopedTickets.filter((ticket) => ticket.statutCode === 6)
+    if (candidates.length === 0) {
+      setWorkflowTicketStatuses({})
+      return
+    }
+
+    const controller = new AbortController()
+    const statuses: Record<string, TicketBusinessStatus> = {}
+    let cursor = 0
+
+    async function worker() {
+      while (!controller.signal.aborted) {
+        const ticket = candidates[cursor]
+        cursor += 1
+        if (!ticket) return
+
+        try {
+          const token = localStorage.getItem('auth_token')
+          const response = await fetch(`${getApiBase()}/api/tickets/${encodeURIComponent(ticket.id)}/workflow`, {
+            credentials: 'include',
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            signal: controller.signal,
+          })
+          if (!response.ok) continue
+          statuses[ticket.id] = getTicketBusinessStatus(ticket, unwrapWorkflow(await response.json()))
+        } catch {
+          if (controller.signal.aborted) return
+        }
+      }
+    }
+
+    Promise.all(Array.from({ length: Math.min(6, candidates.length) }, () => worker())).then(() => {
+      if (!controller.signal.aborted) setWorkflowTicketStatuses(statuses)
+    })
+
+    return () => controller.abort()
+  }, [scopedTickets])
   useEffect(() => {
     setProjectOptions((current) => uniqueSorted([...current, ...projects]))
   }, [projects])
@@ -182,17 +249,23 @@ export default function DashboardPage() {
   }, [buyers])
   const periodLabel = useMemo(() => formatPeriodLabel(dateFrom, dateTo), [dateFrom, dateTo])
   const dateRangeError = dateFrom !== '' && dateTo !== '' && dateFrom > dateTo
+  const quickFilteredTickets = useMemo(() => {
+    if (quickFilter === 'rejected') {
+      return scopedTickets.filter((ticket) => getResolvedTicketStatus(ticket, workflowTicketStatuses) === 'Rejeté')
+    }
+    if (quickFilter === 'late') return tickets
+    return scopedTickets
+  }, [quickFilter, scopedTickets, tickets, workflowTicketStatuses])
   const visibleTickets = useMemo(() => {
-    const filtered = quickFilter === 'rejected' ? tickets.filter(isRejectedTicket) : tickets
     const query = search.trim().toLowerCase()
-    if (!query) return filtered
-    return filtered.filter((ticket) =>
+    if (!query) return quickFilteredTickets
+    return quickFilteredTickets.filter((ticket) =>
       [ticket.reference, ticket.name, ticket.projet, ticket.acheteur, ticket.statut, ticket.priorite]
         .join(' ')
         .toLowerCase()
         .includes(query),
     )
-  }, [quickFilter, search, tickets])
+  }, [quickFilteredTickets, search])
   const ticketPageCount = Math.max(1, Math.ceil(visibleTickets.length / ticketPageSize))
   const paginatedTickets = useMemo(() => {
     const start = (ticketPage - 1) * ticketPageSize
@@ -201,10 +274,51 @@ export default function DashboardPage() {
   const ticketPageStart = visibleTickets.length === 0 ? 0 : (ticketPage - 1) * ticketPageSize + 1
   const ticketPageEnd = Math.min(visibleTickets.length, ticketPage * ticketPageSize)
   const ticketPages = useMemo(() => getPaginationPages(ticketPage, ticketPageCount), [ticketPage, ticketPageCount])
-  const workflowKpis = useMemo(() => buildWorkflowKpis(tickets), [tickets])
-  const globalWorkflowProgress = useMemo(() => calculateGlobalWorkflowProgress(workflowKpis), [workflowKpis])
+  const workflowKpis = useMemo(
+    () => buildWorkflowKpis(quickFilteredTickets, workflowTicketStatuses),
+    [quickFilteredTickets, workflowTicketStatuses],
+  )
+  const globalWorkflowProgress = useMemo(
+    () => buildWorkflowProgress(scopedTickets, quickFilter, workflowTicketStatuses),
+    [scopedTickets, quickFilter, workflowTicketStatuses],
+  )
   const processAnalysis = useMemo(() => buildProcessAnalysis(tickets), [tickets])
-  const selectedTimelineSteps = useMemo(() => buildTimelineSteps(selectedTicket), [selectedTicket])
+  const selectedTimelineSteps = useMemo(() => buildTimelineSteps(selectedTicket, selectedWorkflow), [selectedTicket, selectedWorkflow])
+
+  useEffect(() => {
+    if (!selectedTicket) {
+      setSelectedWorkflow(null)
+      setWorkflowError(null)
+      return
+    }
+    const ticket = selectedTicket
+    const ticketId = ticket.id
+    const controller = new AbortController()
+    async function loadWorkflow() {
+      setWorkflowLoading(true)
+      setSelectedWorkflow(null)
+      setWorkflowError(null)
+      try {
+        const token = localStorage.getItem('auth_token')
+        const response = await fetch(`${getApiBase()}/api/tickets/${encodeURIComponent(ticketId)}/workflow`, {
+          credentials: 'include',
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
+          signal: controller.signal,
+        })
+        if (!response.ok) throw new Error(`HTTP ${response.status}`)
+        const payload = await response.json()
+        const workflow = unwrapWorkflow(payload)
+        setSelectedWorkflow(workflow)
+        setWorkflowTicketStatuses((current) => ({ ...current, [ticketId]: getTicketBusinessStatus(ticket, workflow) }))
+      } catch (error) {
+        if (!controller.signal.aborted) setWorkflowError(error instanceof Error ? error.message : String(error))
+      } finally {
+        if (!controller.signal.aborted) setWorkflowLoading(false)
+      }
+    }
+    loadWorkflow()
+    return () => controller.abort()
+  }, [selectedTicket])
   const sortedValidators = useMemo(
     () => sortActorPerformance(processAnalysis.validators, validatorSort),
     [processAnalysis.validators, validatorSort],
@@ -236,8 +350,7 @@ export default function DashboardPage() {
   }
 
   const headerFilters = useMemo(
-    () =>
-      activeDashboardTab === 'tickets' ? (
+    () => (
         <div className="grid w-full max-w-[1150px] gap-3 grid-cols-2 md:grid-cols-8 2xl:grid-cols-[170px_180px_110px_minmax(200px,auto)_120px_120px_auto_auto] 2xl:items-center">
           <div className="relative min-w-0 col-span-2 md:col-span-1 2xl:col-span-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-neutral-400" />
@@ -322,8 +435,8 @@ export default function DashboardPage() {
             <span className="hidden sm:inline">Réinit.</span>
           </Button>
         </div>
-      ) : null,
-    [activeDashboardTab, buyer, buyerOptions, dateFrom, dateRangeError, dateTo, hasFilters, project, projectOptions, quickFilter, search],
+      ),
+    [buyer, buyerOptions, dateFrom, dateRangeError, dateTo, hasFilters, project, projectOptions, quickFilter, search],
   )
 
   useEffect(() => {
@@ -333,56 +446,35 @@ export default function DashboardPage() {
 
   return (
     <div className="min-h-screen space-y-5 bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.08),transparent_28rem),linear-gradient(180deg,#f8fafc_0%,#ffffff_38%)] px-2 py-3 text-neutral-950 sm:px-4 lg:px-6">
-      <div className="rounded-lg border border-slate-200/80 bg-white/90 px-4 py-4 shadow-[0_18px_45px_rgba(15,23,42,0.06)] backdrop-blur sm:px-5 sm:py-5">
-        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-          <div>
-            <div className="inline-flex items-center gap-2 rounded-lg border border-ades-green/15 bg-ades-green/5 px-3 py-1 text-xs font-semibold text-ades-green">
-              <BarChart3 className="size-3.5" />
-              Pilotage achats
-            </div>
-            <h1 className="mt-3 text-2xl font-semibold tracking-tight text-neutral-950 sm:text-3xl">Tableau de bord</h1>
-            <p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">
-              Suivi consolidé des demandes d'achat, priorités, échéances et performance du processus.
-            </p>
-          </div>
-          <div className="rounded-lg border border-slate-200 bg-slate-50/80 px-3 py-2 text-xs font-medium text-neutral-600 shadow-sm">
-            <span className="block text-[10px] font-semibold uppercase text-neutral-400">Période KPI</span>
-            <span className="mt-0.5 block">
-              {loading ? 'Chargement...' : error ? `Erreur: ${error}` : `${summary?.period?.from ?? '-'} -> ${summary?.period?.to ?? '-'}`}
-            </span>
-          </div>
-        </div>
-
-        <div className="mt-6">
-          <WorkflowKpiOverview kpis={workflowKpis} progress={globalWorkflowProgress} />
-        </div>
+      <div className="mt-6">
+        <WorkflowKpiOverview kpis={workflowKpis} progress={globalWorkflowProgress} />
       </div>
 
       <Tabs value={activeDashboardTab} onValueChange={setActiveDashboardTab} className="gap-3">
         <TabsList className="hidden">
-          <TabsTrigger value="tickets" className="px-4">
-            <Filter className="size-4" />
-            Tickets
-          </TabsTrigger>
           <TabsTrigger value="process" className="px-4">
             <BarChart3 className="size-4" />
             Évaluation des processus
           </TabsTrigger>
+          <TabsTrigger value="tickets" className="px-4">
+            <Filter className="size-4" />
+            Tickets
+          </TabsTrigger>
         </TabsList>
 
-      <Card className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.05)] gap-0">
+      <>
         <CardHeader className="border-b border-slate-100 bg-white/95 px-5 py-4">
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <TabsList className="h-10 w-full justify-start rounded-lg border border-slate-200 bg-slate-50 p-1 transition-all duration-200 sm:w-fit">
-                <TabsTrigger value="tickets" className="h-8 rounded-md px-3 text-neutral-600 transition-all duration-200 data-[state=active]:bg-white data-[state=active]:text-ades-green data-[state=active]:shadow-sm">
-                    <Filter className="size-4" />
-                    Tickets
-                  </TabsTrigger>
-                  <TabsTrigger value="process" className="h-8 rounded-md px-3 text-neutral-600 transition-all duration-200 data-[state=active]:bg-white data-[state=active]:text-ades-green data-[state=active]:shadow-sm">
+                <TabsTrigger value="process" className="h-8 rounded-md px-3 text-neutral-600 transition-all duration-200 data-[state=active]:bg-white data-[state=active]:text-ades-green data-[state=active]:shadow-sm">
                     <BarChart3 className="size-4" />
                     Évaluation des processus
+                  </TabsTrigger>
+                  <TabsTrigger value="tickets" className="h-8 rounded-md px-3 text-neutral-600 transition-all duration-200 data-[state=active]:bg-white data-[state=active]:text-ades-green data-[state=active]:shadow-sm">
+                    <Filter className="size-4" />
+                    Tickets
                   </TabsTrigger>
                 </TabsList>
                 <p className="text-sm text-neutral-500">
@@ -406,9 +498,10 @@ export default function DashboardPage() {
           ) : (
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
               <div className="max-h-[70vh] min-h-[420px] overflow-auto">
-              <table className="min-w-[860px] w-full divide-y divide-slate-100 text-left text-sm">
+              <table className="min-w-[940px] w-full divide-y divide-slate-100 text-left text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-50/95 text-[11px] uppercase text-neutral-500 shadow-[0_1px_0_rgba(226,232,240,1)] backdrop-blur">
                   <tr>
+                    <th className="px-4 py-3.5 font-semibold tracking-wide">N° Ticket</th>
                     <th className="px-4 py-3.5 font-semibold tracking-wide">Nom</th>
                     <th className="px-4 py-3.5 font-semibold tracking-wide">Projet</th>
                     <th className="px-4 py-3.5 font-semibold tracking-wide">Acheteur</th>
@@ -422,18 +515,23 @@ export default function DashboardPage() {
                   {paginatedTickets.map((ticket) => (
                     <tr
                       key={ticket.id}
-                      onClick={() => setSelectedTicket(ticket)}
+                      onClick={() => {
+                        setSelectedWorkflow(null)
+                        setWorkflowLoading(true)
+                        setSelectedTicket(ticket)
+                      }}
                       className={`cursor-pointer transition-all duration-200 hover:bg-slate-50/80 ${
                         ticket.isLate ? 'bg-red-50/40 hover:bg-red-50/70' : ''
                       }`}
                     >
+                      <td className="whitespace-nowrap px-4 py-3.5 font-semibold tabular-nums text-neutral-800">{ticket.reference}</td>
                       <td className="max-w-[420px] px-4 py-3.5 text-neutral-800">
                         <span className="block truncate font-medium">{ticket.name}</span>
                       </td>
                       <td className="px-4 py-3.5 text-neutral-600">{ticket.projet}</td>
                       <td className="px-4 py-3.5 text-neutral-600">{ticket.acheteur}</td>
                       <td className="px-4 py-3.5">
-                        <StatusBadge label={ticket.statut} code={ticket.statutCode} />
+                        <StatusBadge ticket={ticket} status={workflowTicketStatuses[ticket.id]} />
                       </td>
                       <td className="px-4 py-3.5">
                         <PriorityBadge label={ticket.priorite} code={ticket.prioriteCode} />
@@ -474,12 +572,15 @@ export default function DashboardPage() {
           />
         </TabsContent>
         </CardContent>
-      </Card>
+      </>
       </Tabs>
 
       <TicketProgressDialog
         ticket={selectedTicket}
         steps={selectedTimelineSteps}
+        workflow={selectedWorkflow}
+        workflowLoading={workflowLoading}
+        workflowError={workflowError}
         onOpenChange={(open) => {
           if (!open) setSelectedTicket(null)
         }}
@@ -489,43 +590,96 @@ export default function DashboardPage() {
 }
 
 
-function WorkflowKpiOverview({ kpis, progress }: { kpis: WorkflowKpi[]; progress: number }) {
+function WorkflowKpiOverview({ kpis, progress }: { kpis: WorkflowKpi[]; progress: WorkflowProgressSummary }) {
+  const progressTone = workflowProgressTone(progress)
+
   return (
-    <div className="space-y-5">
-      <div className="grid gap-5 lg:grid-cols-[minmax(220px,0.55fr)_1fr] lg:items-end">
-        <div className="rounded-lg border border-slate-200 bg-slate-50/70 px-4 py-3">
-          <p className="text-xs font-semibold uppercase text-neutral-400">Progression globale</p>
-          <div className="flex items-baseline gap-2">
-            <span className="text-4xl font-semibold leading-none text-neutral-950">{progress}%</span>
-            <span className="text-sm font-medium text-neutral-500">complété</span>
-          </div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-white">
-            <div className="h-full rounded-full bg-ades-green transition-all duration-500" style={{ width: `${progress}%` }} />
-          </div>
-        </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-          {kpis.map((item) => {
-            const Icon = item.icon
-            const tone = workflowKpiTone(item.tone)
-            return (
-              <div key={item.key} className={`min-w-0 rounded-lg border px-4 py-3 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md ${tone.card}`}>
-                <div className="flex items-start justify-between gap-3">
-                  <div className={`rounded-lg bg-white/85 p-2 ${tone.icon}`}>
-                    <Icon className="size-4" />
-                  </div>
-                  <span className="text-3xl font-semibold leading-none text-neutral-950">{item.count}</span>
-                </div>
-                <p className="mt-3 truncate text-xs font-semibold uppercase text-neutral-500">{item.label}</p>
-                <p className="mt-1 line-clamp-2 text-xs leading-5 text-neutral-500">{item.description}</p>
+    <div className="space-y-4">
+      <div className={`overflow-hidden rounded-[28px] border bg-white px-5 py-5 shadow-[0_20px_45px_rgba(15,23,42,0.06)] sm:px-6 lg:px-7 ${progressTone.shell}`}>
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-2xl">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-500 shadow-sm backdrop-blur">
+              <BarChart3 className={`size-3.5 ${progressTone.icon}`} />
+              Progression des tickets
+            </div>
+            <div className="mt-4 flex flex-wrap items-end gap-x-4 gap-y-3">
+              <div className="flex items-end gap-3">
+                <span className="text-5xl font-semibold tracking-[-0.06em] text-neutral-950 sm:text-6xl">{progress.percentage}%</span>
+                <span className={`mb-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${progressTone.badge}`}>{progress.suffix}</span>
               </div>
-            )
-          })}
+              <div className="mb-1">
+                <p className="text-sm font-medium text-neutral-500">{progress.detail}</p>
+                <p className="mt-1 text-xs uppercase tracking-[0.18em] text-neutral-400">Indicateur actif du filtre sélectionné</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="w-full max-w-[280px] rounded-[24px] border border-white/70 bg-white/85 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)] backdrop-blur">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-neutral-400">Volume suivi</p>
+            <div className="mt-2 flex items-end gap-2">
+              <span className="text-3xl font-semibold tracking-[-0.05em] text-neutral-950">{progress.count}</span>
+              <span className="pb-1 text-sm text-neutral-500">sur {progress.total}</span>
+            </div>
+            <p className="mt-1 text-xs leading-5 text-neutral-500">Lecture instantanée du ratio utilisé pour la progression affichée.</p>
+          </div>
         </div>
+
+        <div className="mt-5">
+          <div className="h-2.5 overflow-hidden rounded-full bg-white/80 shadow-inner ring-1 ring-slate-100">
+            <div
+              className={`h-full rounded-full transition-all duration-700 ease-out ${progressTone.bar}`}
+              style={{ width: `${progress.percentage}%` }}
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {kpis.map((item) => {
+          const Icon = item.icon
+          const tone = workflowKpiTone(item.tone)
+          return (
+            <div key={item.key} className={`min-w-0 rounded-[24px] border px-4 py-4 shadow-[0_14px_30px_rgba(15,23,42,0.04)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_34px_rgba(15,23,42,0.07)] ${tone.card}`}>
+              <div className="flex items-start justify-between gap-3">
+                <div className={`rounded-2xl border border-white/80 bg-white/90 p-2.5 shadow-sm ${tone.icon}`}>
+                  <Icon className="size-4" />
+                </div>
+                <span className="text-3xl font-semibold leading-none tracking-[-0.04em] text-neutral-950">{item.count}</span>
+              </div>
+              <p className="mt-4 truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-500">{item.label}</p>
+              <p className="mt-1 line-clamp-2 text-xs leading-5 text-neutral-500">{item.description}</p>
+            </div>
+          )
+        })}
       </div>
     </div>
   )
 }
 
+function workflowProgressTone(progress: WorkflowProgressSummary) {
+  if (progress.suffix.includes('rejet')) {
+    return {
+      shell: 'border-red-100/80 bg-[linear-gradient(135deg,rgba(254,242,242,0.92),rgba(255,255,255,0.98))]',
+      bar: 'bg-gradient-to-r from-red-500 via-red-400 to-orange-300',
+      badge: 'bg-red-50 text-red-700',
+      icon: 'text-red-600',
+    }
+  }
+  if (progress.suffix.includes('retard')) {
+    return {
+      shell: 'border-amber-100/90 bg-[linear-gradient(135deg,rgba(255,251,235,0.96),rgba(255,255,255,0.98))]',
+      bar: 'bg-gradient-to-r from-amber-500 via-orange-400 to-amber-300',
+      badge: 'bg-amber-50 text-amber-700',
+      icon: 'text-amber-600',
+    }
+  }
+  return {
+    shell: 'border-emerald-100/80 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(255,255,255,0.98))]',
+    bar: 'bg-gradient-to-r from-ades-green via-emerald-400 to-teal-300',
+    badge: 'bg-emerald-50 text-emerald-700',
+    icon: 'text-ades-green',
+  }
+}
 
 function TicketPaginationControls({
   page,
@@ -961,123 +1115,283 @@ function BlockedTicketRow({ ticket }: { ticket: BlockedTicket }) {
 function TicketProgressDialog({
   ticket,
   steps,
+  workflow,
+  workflowLoading,
+  workflowError,
   onOpenChange,
 }: {
   ticket: DashboardTicket | null
   steps: TimelineStep[]
+  workflow: WorkflowData | null
+  workflowLoading: boolean
+  workflowError: string | null
   onOpenChange: (open: boolean) => void
 }) {
-  const currentStep = steps.find((step) => step.state === 'current') ?? [...steps].reverse().find((step) => step.state === 'done')
-  const lastUpdate = getLastTimelineUpdate(steps)
-  const elapsed = getElapsedSinceCreation(ticket)
+  const rejectedStep = steps.find((step) => step.state === 'rejected')
+  const workflowRejected = workflowIsRejected(workflow)
+  const currentStep = rejectedStep ?? steps.find((step) => step.state === 'current') ?? [...steps].reverse().find((step) => step.state === 'done')
+  const elapsed = getElapsedSinceCreation(ticket, workflow)
+  const longestDuration = steps.reduce((max, step) => Math.max(max, step.durationMinutes ?? 0), 0)
+  const timedSteps = steps.filter((step): step is TimelineStep & { durationMinutes: number; duration: string } => step.durationMinutes !== null && step.duration !== null)
+  const fastestStep = timedSteps.length > 0 ? [...timedSteps].sort((a, b) => a.durationMinutes - b.durationMinutes)[0] : null
+  const slowestStep = timedSteps.length > 0 ? [...timedSteps].sort((a, b) => b.durationMinutes - a.durationMinutes)[0] : null
+  const displayedSteps: TimelineStep[] = workflowLoading
+    ? WORKFLOW_TIMELINE_LABELS.map((step, index) => ({
+        ...step,
+        renderKey: `loading-${step.key}`,
+        date: '-',
+        user: '-',
+        state: index === 0 ? 'current' : 'pending',
+        duration: null,
+        durationMinutes: null,
+      }))
+    : steps
 
   return (
     <Dialog open={Boolean(ticket)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-5xl">
+      <DialogContent className="max-h-[90vh] overflow-y-auto border-white/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.98))] shadow-[0_32px_90px_rgba(15,23,42,0.10)] sm:max-w-5xl">
         <DialogHeader>
-          <div className="flex flex-col gap-4 pr-8 lg:flex-row lg:items-start lg:justify-between">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-center gap-2">
-                <DialogTitle>Suivi d'avancement de la demande</DialogTitle>
-                {ticket && <StatusBadge label={ticket.statut} code={ticket.statutCode} />}
+          <div className="flex flex-col gap-5 pr-8">
+            <div className="flex flex-wrap items-start gap-3">
+              <div className="min-w-0">
+                <DialogTitle className="max-w-4xl text-2xl font-semibold tracking-[-0.05em] text-slate-950 sm:text-3xl">
+                  {ticket?.reference ? `${ticket.reference} - ${ticket?.name ?? '-'}` : ticket?.name ?? '-'}
+                </DialogTitle>
+                <div className="mt-3 h-px w-full max-w-3xl bg-gradient-to-r from-ades-green/25 via-slate-200 to-transparent" />
               </div>
-              <DialogDescription>
-                {ticket ? `Ticket ${ticket.reference} - ${ticket.name}` : 'Aucun ticket sélectionné.'}
-              </DialogDescription>
+            </div>
+            <div className="flex justify-center pt-1">
+              <div className="w-full max-w-4xl">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <MetricCard
+                    label="Temps écoulé"
+                    value={elapsed}
+                    accent="slate"
+                    loading={workflowLoading}
+                  />
+                  <MetricCard
+                    label="Statut"
+                    value={workflowRejected || rejectedStep ? 'Rejeté' : currentStep?.label ?? '-'}
+                    accent="green"
+                    loading={workflowLoading}
+                  />
+                  <MetricCard
+                    label="Étape la plus rapide"
+                    value={fastestStep?.label ?? '-'}
+                    detail={fastestStep?.duration ?? 'Non disponible'}
+                    accent="sky"
+                    loading={workflowLoading}
+                  />
+                  <MetricCard
+                    label="Étape la plus longue"
+                    value={slowestStep?.label ?? '-'}
+                    detail={slowestStep?.duration ?? 'Non disponible'}
+                    accent="amber"
+                    loading={workflowLoading}
+                  />
+                </div>
+              </div>
             </div>
           </div>
         </DialogHeader>
 
-        <div className="grid gap-3 sm:grid-cols-3">
-          <ProgressInfoCard label="Étape actuelle" value={currentStep?.label ?? '-'} tone="green" />
-          <ProgressInfoCard label="Temps écoulé" value={elapsed} tone="blue" />
-          <ProgressInfoCard label="Dernière mise à jour" value={lastUpdate} tone="slate" />
-        </div>
+        {workflowError && <p className="text-xs text-amber-700">Workflow indisponible ({workflowError}). Les informations du ticket restent affichées.</p>}
 
-        <div className="grid gap-3 lg:grid-cols-5">
-          {steps.map((step, index) => (
-            <div key={step.key} className="relative">
-              {index < steps.length - 1 && (
-                <>
-                  <div
-                    className={`absolute left-6 top-10 h-[calc(100%_-_1rem)] w-px lg:hidden ${
-                      step.state === 'done' ? 'bg-ades-green' : 'bg-slate-200'
-                    }`}
-                  />
-                  <div
-                    className={`absolute left-6 top-6 hidden h-0.5 w-[calc(100%_-_1.5rem)] lg:block ${
-                      step.state === 'done' ? 'bg-ades-green' : 'bg-slate-200'
-                    }`}
-                  />
-                </>
-              )}
-              <div
-                className={`relative min-h-[144px] rounded-lg border p-4 transition-all duration-300 ${
-                  step.state === 'current'
-                    ? 'border-ades-green bg-ades-green/5 shadow-sm ring-2 ring-ades-green/10'
-                    : step.state === 'done'
-                      ? 'border-green-200 bg-white'
-                      : 'border-slate-200 bg-slate-50/60'
-                }`}
-              >
-                <div className="flex items-start gap-2">
-                  <TimelineIcon state={step.state} />
-                  <div className="min-w-0 flex-1">
-                    <p className={`text-sm font-semibold ${step.state === 'pending' ? 'text-neutral-500' : 'text-neutral-900'}`}>{step.label}</p>
-                    <p className="mt-2 text-xs text-neutral-500">{step.date}</p>
-                    <p className="mt-1 truncate text-xs text-neutral-500">{step.user}</p>
-                    <p
-                      className={`mt-3 inline-flex rounded-md px-2 py-0.5 text-[11px] font-semibold ${
-                        step.state === 'done'
-                          ? 'bg-green-50 text-green-700'
-                          : step.state === 'current'
-                            ? 'bg-ades-green/10 text-ades-green'
-                            : 'bg-slate-100 text-slate-500'
-                      }`}
-                    >
-                      {step.state === 'done' ? 'Terminé' : step.state === 'current' ? 'En cours' : 'À venir'}
-                    </p>
+        <div className="overflow-x-auto pt-3 pb-2">
+          <div className="rounded-[34px] bg-[radial-gradient(circle_at_top,rgba(76,139,64,0.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.72),rgba(248,250,252,0.82))] px-2 py-6 sm:px-4 sm:py-9">
+            <div className="relative grid min-w-[920px] grid-cols-5 gap-x-2 px-4">
+              <div className="pointer-events-none absolute left-[10%] right-[10%] top-8 z-0 h-px bg-slate-200/90" />
+              <div className="pointer-events-none absolute left-[10%] top-8 z-0 h-px bg-gradient-to-r from-ades-green via-emerald-400 to-emerald-300 shadow-[0_0_14px_rgba(52,211,153,0.25)]" style={{ width: `${Math.max(0, ((displayedSteps.filter((step) => step.state === 'done').length - 1) / Math.max(1, displayedSteps.length - 1)) * 80)}%` }} />
+              {displayedSteps.map((step, index) => (
+                <div key={step.renderKey ?? `${step.key}-${index}`} className="relative z-10 min-w-0 px-3 text-center">
+                  {!workflowLoading && index > 0 && step.duration && (
+                    <div className={`absolute -left-6 top-0 w-12 text-center text-[11px] font-medium tracking-[0.02em] ${
+                      step.durationMinutes === longestDuration && longestDuration > 0 ? 'text-amber-700' : 'text-slate-400'
+                    }`}>
+                      {step.duration}
+                    </div>
+                  )}
+                  <div className="relative flex flex-col items-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          type="button"
+                          className="group flex flex-col items-center outline-none transition-transform duration-200 hover:-translate-y-0.5"
+                          aria-label={`${step.label} - ${timelineTooltipLabel(step)}`}
+                        >
+                          <TimelineIcon state={step.state} stepKey={step.key} loading={workflowLoading} />
+                          <div className="mt-5 flex min-h-[74px] flex-col items-center justify-start">
+                            {workflowLoading ? (
+                              <>
+                                <Skeleton className="h-5 w-28" />
+                                <Skeleton className="mt-2 h-1.5 w-6 rounded-full" />
+                              </>
+                            ) : (
+                              <>
+                                <p className={`max-w-[10rem] text-balance transition-colors ${
+                                  step.state === 'rejected'
+                                    ? 'text-base font-semibold tracking-[-0.03em] text-red-700'
+                                    : step.state === 'current'
+                                    ? 'text-base font-semibold tracking-[-0.03em] text-slate-950'
+                                    : step.state === 'pending'
+                                      ? 'text-sm font-medium text-slate-400'
+                                      : 'text-sm font-semibold text-slate-700'
+                                }`}>
+                                  {step.label}
+                                </p>
+                                <span className={`mt-2 h-1.5 rounded-full transition-all ${
+                                  step.state === 'rejected'
+                                    ? 'w-10 bg-red-500'
+                                    : step.state === 'current'
+                                    ? 'w-10 bg-ades-green'
+                                    : step.state === 'done'
+                                      ? 'w-6 bg-emerald-300'
+                                      : 'w-4 bg-slate-200'
+                                }`} />
+                              </>
+                            )}
+                          </div>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" align="center" className="max-w-[240px] rounded-3xl border-slate-200/80 bg-white px-4 py-4 text-left shadow-[0_24px_60px_rgba(15,23,42,0.14)]">
+                        <div className="space-y-3">
+                          <div className="flex items-start justify-between gap-3">
+                            <div>
+                              <p className="text-sm font-semibold text-slate-900">{step.label}</p>
+                              <p className={`text-[11px] uppercase tracking-[0.18em] ${step.state === 'rejected' ? 'text-red-600' : 'text-slate-400'}`}>{timelineTooltipLabel(step)}</p>
+                            </div>
+                            <span className={`inline-flex rounded-full px-2.5 py-1 text-[10px] font-medium uppercase tracking-[0.14em] ${step.state === 'rejected' ? 'bg-red-50 text-red-700' : 'bg-slate-100 text-slate-500'}`}>
+                              {timelineRoleLabel(step.key)}
+                            </span>
+                          </div>
+                          <div className="space-y-2 text-sm text-slate-600">
+                            <div>
+                              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Acteur</p>
+                              <p className={`mt-1 font-medium ${isMissingActorValue(step.user) ? 'text-red-600' : 'text-slate-800'}`}>{isMissingActorValue(step.user) ? 'Non identifié' : step.user}</p>
+                            </div>
+                            {step.assignedBuyer && (
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Acheteur assigné</p>
+                                <p className="mt-1 font-medium text-slate-800">{step.assignedBuyer}</p>
+                              </div>
+                            )}
+                            <div>
+                              <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Date</p>
+                              <p className="mt-1">{step.date === 'À venir' ? 'Date non disponible' : step.date}</p>
+                            </div>
+                            {step.duration && (
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Durée</p>
+                                <p className="mt-1 font-medium text-slate-800">{step.duration}</p>
+                              </div>
+                            )}
+                            {step.detail && (
+                              <div>
+                                <p className="text-[11px] uppercase tracking-[0.16em] text-slate-400">Détail</p>
+                                <p className="mt-1 text-slate-800">{step.detail}</p>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </TooltipContent>
+                    </Tooltip>
                   </div>
                 </div>
-              </div>
+              ))}
             </div>
-          ))}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
   )
 }
 
-function TimelineIcon({ state }: { state: TimelineStepState }) {
-  if (state === 'done') return <CheckCircle2 className="mt-0.5 size-6 shrink-0 text-green-600" />
-  if (state === 'current') return <Clock3 className="mt-0.5 size-6 shrink-0 text-ades-green" />
-  return <Circle className="mt-0.5 size-6 shrink-0 text-slate-300" />
+function TimelineIcon({ state, stepKey, loading = false }: { state: TimelineStepState; stepKey: string; loading?: boolean }) {
+  const Icon = stepKey === 'creation' ? FileText : stepKey === 'validation' ? ShieldCheck : stepKey === 'assignation' ? UserCheck : stepKey === 'achat' ? ShoppingCart : Archive
+  return (
+    <span className="relative z-10 flex size-16 items-center justify-center">
+      {loading ? (
+        <Skeleton className="size-12 rounded-full" />
+      ) : (
+        <span className={`flex items-center justify-center rounded-full transition-all duration-300 ${
+          state === 'rejected'
+            ? 'size-16 scale-105 bg-red-600 text-white shadow-[0_18px_36px_rgba(220,38,38,0.22)] ring-[10px] ring-red-500/10'
+            : state === 'current'
+            ? 'size-16 scale-105 bg-ades-green text-white shadow-[0_18px_36px_rgba(76,139,64,0.22)] ring-[10px] ring-ades-green/10'
+            : state === 'done'
+              ? 'size-12 bg-emerald-50 text-emerald-700 ring-1 ring-emerald-200'
+              : 'size-11 bg-slate-100 text-slate-400 ring-1 ring-slate-200'
+        }`}>
+          <Icon className="size-5" />
+        </span>
+      )}
+    </span>
+  )
 }
 
-function ProgressInfoCard({ label, value, tone }: { label: string; value: string; tone: 'green' | 'blue' | 'slate' }) {
-  const tones = {
-    green: 'border-ades-green/20 bg-ades-green/5 text-ades-green',
-    blue: 'border-blue-200 bg-blue-50 text-blue-700',
-    slate: 'border-slate-200 bg-slate-50 text-slate-700',
+function timelineTooltipLabel(step: TimelineStep) {
+  if (step.state === 'rejected') return 'Etape rejetée'
+  if (step.state === 'current') return 'Etape en cours'
+  if (step.state === 'done') return 'Etape terminee'
+  return 'Etape a venir'
+}
+
+function isMissingActorValue(value: string) {
+  const normalized = value.trim().toLowerCase()
+  return normalized === '' || normalized === '-' || normalized === 'non identifié' || normalized === 'non identifie' || normalized === 'non assigné' || normalized === 'non assigne' || normalized === 'demandeur' || normalized === 'validateur'
+}
+
+function MetricCard({ label, value, detail, accent, loading = false }: { label: string; value: string; detail?: string; accent: 'slate' | 'green' | 'sky' | 'amber'; loading?: boolean }) {
+  const styles = {
+    slate: 'border-slate-200/70 bg-white/92 text-slate-500',
+    green: 'border-emerald-200/70 bg-emerald-50/72 text-emerald-700',
+    sky: 'border-sky-200/70 bg-sky-50/72 text-sky-700',
+    amber: 'border-amber-200/70 bg-amber-50/72 text-amber-700',
   }
 
   return (
-    <div className={`rounded-lg border px-4 py-3 ${tones[tone]}`}>
-      <p className="text-xs font-medium text-neutral-500">{label}</p>
-      <p className="mt-1 truncate text-sm font-semibold">{value}</p>
+    <div className={`group rounded-[24px] border px-5 py-4 text-center shadow-[0_10px_30px_rgba(15,23,42,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_40px_rgba(15,23,42,0.07)] ${styles[accent]}`}>
+      <p className="text-[11px] font-medium uppercase tracking-[0.22em]">{label}</p>
+      {loading ? (
+        <>
+          <Skeleton className="mx-auto mt-2 h-6 w-24" />
+          {detail !== undefined && <Skeleton className="mx-auto mt-1 h-5 w-16" />}
+        </>
+      ) : (
+        <>
+          <p className="mt-2 text-base font-semibold leading-6 text-slate-950">{value}</p>
+          {detail && <p className="mt-1 text-sm text-slate-500">{detail}</p>}
+        </>
+      )}
     </div>
   )
 }
 
-function StatusBadge({ label, code }: { label: string; code: number }) {
-  const className =
-    code === 5 || code === 6
-      ? 'bg-green-50 text-green-700'
-      : code === 4
-        ? 'bg-amber-50 text-amber-700'
-        : 'bg-blue-50 text-blue-700'
+function StatusBadge({ ticket, status: statusOverride }: { ticket: DashboardTicket; status?: TicketBusinessStatus }) {
+  const status = statusOverride ?? getTicketBusinessStatus(ticket)
+  const styles = {
+    'Créé': 'bg-slate-100 text-slate-700',
+    'Assigné': 'bg-blue-50 text-blue-700',
+    'En cours de traitement': 'bg-amber-50 text-amber-700',
+    'Clos': 'bg-green-50 text-green-700',
+    'Rejeté': 'bg-red-50 text-red-700',
+  }
 
-  return <span className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-medium ${className}`}>{label}</span>
+  return <span className={`inline-flex whitespace-nowrap rounded-lg px-2.5 py-1 text-xs font-semibold ${styles[status]}`}>{status}</span>
+}
+
+function getTicketBusinessStatus(ticket: DashboardTicket, workflow: WorkflowData | null = null): TicketBusinessStatus {
+  return resolveTicketBusinessStatus({
+    ...ticket.raw,
+    status: ticket.statutCode,
+    status_label: ticket.statut,
+    acheteur: ticket.acheteur,
+    date_resolution: ticket.dateResolutionRaw,
+  }, workflow)
+}
+
+function getResolvedTicketStatus(ticket: DashboardTicket, workflowStatuses: Record<string, TicketBusinessStatus>) {
+  return workflowStatuses[ticket.id] ?? getTicketBusinessStatus(ticket)
 }
 
 function PriorityBadge({ label, code }: { label: string; code: number }) {
@@ -1086,13 +1400,28 @@ function PriorityBadge({ label, code }: { label: string; code: number }) {
 }
 
 function isRejectedTicket(ticket: DashboardTicket) {
-  const values = [
-    ticket.statut,
-    firstValue(ticket.raw, ['status_label', 'statut', 'status_name', 'statusName', 'etat', 'state']),
-  ]
-  return values
-    .filter((value): value is string | number => value !== null && value !== undefined)
-    .some((value) => /rejet|refus|reject/i.test(String(value)))
+  return isTicketRejected({ ...ticket.raw, status_label: ticket.statut })
+}
+
+function mapDashboardTicket(ticket: Record<string, unknown>): DashboardTicket {
+  return {
+    id: String(ticket.id ?? `${ticket.name ?? 'ticket'}-${ticket.date_creation ?? 'na'}`),
+    reference: String(ticket.id ?? '-'),
+    name: String(ticket.name ?? ticket.titre ?? ticket.title ?? 'Ticket sans nom'),
+    projet: String(ticket.projet ?? ticket.project ?? 'Non renseigné'),
+    acheteur: String(ticket.acheteur ?? ticket.assignedTo ?? 'Non renseigné'),
+    statut: String(ticket.status_label ?? ticket.statut ?? ticket.status ?? '-'),
+    statutCode: Number(ticket.status ?? 0),
+    priorite: normalizePriority(ticket.priority ?? ticket.priorite),
+    prioriteCode: Number(ticket.priority ?? 0),
+    dateCreation: formatDateFr(ticket.date_creation ?? ticket.dateCreation ?? ticket.createdAt ?? ticket.date),
+    dateCreationRaw: ticket.date_creation ?? ticket.dateCreation ?? ticket.createdAt ?? ticket.date,
+    dateEcheance: formatDateFr(ticket.time_to_resolve ?? ticket.date_livraison_souhaitee ?? ticket.date_echeance ?? ticket.dateEcheance ?? ticket.deadline ?? ticket.echeance),
+    dateEcheanceRaw: ticket.time_to_resolve ?? ticket.date_livraison_souhaitee ?? ticket.date_echeance ?? ticket.dateEcheance ?? ticket.deadline ?? ticket.echeance,
+    dateResolutionRaw: ticket.date_resolution ?? ticket.dateResolution ?? ticket.closedate ?? ticket.solvedate,
+    isLate: calculateDelayStatus(ticket).isLate,
+    raw: ticket,
+  }
 }
 
 function normalizePriority(value: unknown) {
@@ -1129,14 +1458,11 @@ function getPaginationPages(current: number, total: number): Array<number | 'ell
   }, [])
 }
 
-function buildTimelineSteps(ticket: DashboardTicket | null): TimelineStep[] {
-  const labels = [
-    { key: 'creation', label: 'Création de la demande' },
-    { key: 'validation', label: 'Validation' },
-    { key: 'assignation', label: 'Assignation à un acheteur' },
-    { key: 'achat', label: 'Achat' },
-    { key: 'cloture', label: 'Clôture' },
-  ]
+function buildTimelineSteps(ticket: DashboardTicket | null, workflow: WorkflowData | null = null): TimelineStep[] {
+  const workflowSteps = workflowTimelineSteps(workflow)
+  if (workflowSteps.length > 0) return workflowSteps
+
+  const labels = WORKFLOW_TIMELINE_LABELS
 
   if (!ticket) {
     return labels.map((step, index) => ({
@@ -1144,12 +1470,16 @@ function buildTimelineSteps(ticket: DashboardTicket | null): TimelineStep[] {
       date: '-',
       user: '-',
       state: index === 0 ? 'current' : 'pending',
+      duration: null,
+      durationMinutes: null,
     }))
   }
 
-  const assigned = hasAssignedBuyer(ticket.acheteur)
-  const resolved = ticket.statutCode >= 5
-  const closed = ticket.statutCode >= 6
+  const enrichedTicket = workflow ? { ...ticket, acheteur: workflowBuyer(workflow) || ticket.acheteur, raw: { ...ticket.raw, ...flattenWorkflow(workflow) } } : ticket
+  const assigned = hasAssignedBuyer(enrichedTicket.acheteur)
+  const rejected = isRejectedTicket(ticket)
+  const resolved = !rejected && ticket.statutCode >= 5
+  const closed = !rejected && ticket.statutCode >= 6
   const validationDone = ticket.statutCode >= 2 || assigned || resolved
   const purchaseDone = resolved || closed
 
@@ -1163,15 +1493,50 @@ function buildTimelineSteps(ticket: DashboardTicket | null): TimelineStep[] {
 
   const firstPendingIndex = labels.findIndex((step) => !doneByKey[step.key])
 
+  const dates = labels.map((step) => timelineTimestamp(step.key, enrichedTicket))
   return labels.map((step, index) => ({
-    ...step,
-    date: timelineDateForStep(step.key, ticket, doneByKey[step.key]),
-    user: timelineUserForStep(step.key, ticket),
-    state: doneByKey[step.key] ? 'done' : index === firstPendingIndex ? 'current' : 'pending',
-  }))
+      ...step,
+      date: timelineDateForStep(step.key, enrichedTicket, doneByKey[step.key]),
+      user: timelineUserForStep(step.key, enrichedTicket),
+      assignedBuyer: undefined,
+      detail: undefined,
+      state: rejected
+        ? step.key === 'creation' ? 'done' : step.key === 'validation' ? 'rejected' : 'pending'
+        : doneByKey[step.key] ? 'done' : index === firstPendingIndex ? 'current' : 'pending',
+      duration: index > 0 ? formatWorkflowDuration(dates[index - 1], dates[index]) : null,
+      durationMinutes: index > 0 ? workflowDurationMinutes(dates[index - 1], dates[index]) : null,
+    }))
 }
 
-function buildWorkflowKpis(tickets: DashboardTicket[]): WorkflowKpi[] {
+function workflowTimelineSteps(workflow: WorkflowData | null): TimelineStep[] {
+  const items = workflowStepRecords(workflow)
+  if (items.length === 0) return []
+
+  const timestamps = items.map((step) => parseDateValue(firstValue(step, ['date'])))
+  const states = items.map((step, index) => workflowTimelineState(stringValue(firstValue(step, ['statut'])).toLowerCase(), index, items, workflowStepIsRejected(step)))
+  const explicitRejectedIndex = states.findIndex((state) => state === 'rejected')
+  const rejectedIndex = explicitRejectedIndex >= 0 ? explicitRejectedIndex : workflowIsRejected(workflow) ? workflowRejectedStepIndex(items) : -1
+  const currentIndex = states.lastIndexOf('current')
+  return items.map((step, index) => {
+    const key = workflowTimelineKey(stringValue(firstValue(step, ['etape'])).toLowerCase())
+    return {
+      key,
+      renderKey: `${key}-${index}`,
+      label: timelineDefaultLabel(key),
+      date: formatTicketDetailDate(firstValue(step, ['date'])),
+      user: actorName(firstValue(step, ['acteur'])),
+      assignedBuyer: key === 'assignation' ? actorName(firstValue(step, ['acheteur_assigne'])) : undefined,
+      detail: stringValue(firstValue(step, ['detail'])) || undefined,
+      state: rejectedIndex >= 0
+        ? index < rejectedIndex ? 'done' : index === rejectedIndex ? 'rejected' : 'pending'
+        : states[index] === 'current' && index !== currentIndex ? 'done' : states[index],
+      duration: index > 0 ? formatWorkflowDuration(timestamps[index - 1], timestamps[index]) : null,
+      durationMinutes: index > 0 ? workflowDurationMinutes(timestamps[index - 1], timestamps[index]) : null,
+    }
+  })
+}
+
+function buildWorkflowKpis(tickets: DashboardTicket[], workflowStatuses: Record<string, TicketBusinessStatus>): WorkflowKpi[] {
   const kpis: WorkflowKpi[] = [
     {
       key: 'to_validate',
@@ -1209,9 +1574,23 @@ function buildWorkflowKpis(tickets: DashboardTicket[]): WorkflowKpi[] {
       progressWeight: 100,
       icon: CheckCircle2,
     },
+    {
+      key: 'rejected',
+      label: 'Tickets rejetés',
+      description: 'Demandes refusées à la validation',
+      count: 0,
+      tone: 'red',
+      progressWeight: 0,
+      icon: AlertTriangle,
+    },
   ]
 
   tickets.forEach((ticket) => {
+    if (getResolvedTicketStatus(ticket, workflowStatuses) === 'Rejeté') {
+      const rejected = kpis.find((item) => item.key === 'rejected')
+      if (rejected) rejected.count += 1
+      return
+    }
     const key = getWorkflowKpiKey(ticket)
     const kpi = kpis.find((item) => item.key === key)
     if (kpi) kpi.count += 1
@@ -1220,12 +1599,45 @@ function buildWorkflowKpis(tickets: DashboardTicket[]): WorkflowKpi[] {
   return kpis
 }
 
-function calculateGlobalWorkflowProgress(kpis: WorkflowKpi[]) {
-  const total = kpis.reduce((sum, item) => sum + item.count, 0)
-  if (total === 0) return 0
+function buildWorkflowProgress(
+  tickets: DashboardTicket[],
+  quickFilter: QuickTicketFilter,
+  workflowStatuses: Record<string, TicketBusinessStatus>,
+): WorkflowProgressSummary {
+  const total = tickets.length
+  if (total === 0) {
+    return {
+      percentage: 0,
+      count: 0,
+      total: 0,
+      detail: quickFilter === 'late'
+        ? '0 / 0 ticket en retard'
+        : quickFilter === 'rejected'
+          ? '0 / 0 ticket rejeté'
+          : '0 / 0 ticket résolu',
+      suffix: quickFilter === 'late' ? 'en retard' : quickFilter === 'rejected' ? 'rejeté' : 'résolu',
+    }
+  }
 
-  const weighted = kpis.reduce((sum, item) => sum + item.count * item.progressWeight, 0)
-  return Math.round(weighted / total)
+  const count = quickFilter === 'late'
+    ? tickets.filter((ticket) => ticket.isLate).length
+    : quickFilter === 'rejected'
+      ? tickets.filter((ticket) => getResolvedTicketStatus(ticket, workflowStatuses) === 'Rejeté').length
+      : tickets.filter((ticket) => getResolvedTicketStatus(ticket, workflowStatuses) === 'Clos').length
+
+  const suffix = quickFilter === 'late'
+    ? 'en retard'
+    : quickFilter === 'rejected'
+      ? 'rejetés'
+      : 'résolus'
+
+  return {
+    percentage: Math.round((count / total) * 100),
+    count,
+    total,
+    detail: `${count} / ${total} ticket${total > 1 ? 's' : ''} ${suffix}`,
+    suffix,
+  }
 }
 
 function getWorkflowKpiKey(ticket: DashboardTicket): WorkflowKpi['key'] {
@@ -1254,6 +1666,10 @@ function workflowKpiTone(tone: WorkflowKpi['tone']) {
       card: 'border-ades-green/10 bg-ades-green/5',
       icon: 'text-ades-green',
     },
+    red: {
+      card: 'border-red-100 bg-red-50/40',
+      icon: 'text-red-700',
+    },
     slate: {
       card: 'border-slate-200 bg-slate-50',
       icon: 'text-slate-700',
@@ -1264,6 +1680,7 @@ function workflowKpiTone(tone: WorkflowKpi['tone']) {
 
 function getWorkflowStageKey(ticket: DashboardTicket) {
   const raw = ticket.raw
+  if (isRejectedTicket(ticket)) return 'validation_n1'
   const closed = ticket.statutCode >= 6 || Boolean(ticket.dateResolutionRaw) || Boolean(firstValue(raw, ['closedAt', 'clotureAt']))
   if (closed) return 'cloture'
 
@@ -1358,8 +1775,8 @@ function buildBuyerPerformance(tickets: DashboardTicket[]): ActorPerformance[] {
   })
 
   return Array.from(groups.entries()).map(([name, items]) => {
-    const completed = items.filter((ticket) => ticket.statutCode >= 5).length
-    const inProgress = items.filter((ticket) => ticket.statutCode >= 2 && ticket.statutCode < 5).length
+    const completed = items.filter((ticket) => getTicketBusinessStatus(ticket) === 'Clos').length
+    const inProgress = items.filter((ticket) => ['Assigné', 'En cours de traitement'].includes(getTicketBusinessStatus(ticket))).length
     const durations = items.map((ticket) => diffDays(getTicketDate(ticket, 'assignation'), getTicketDate(ticket, 'achat') ?? getTicketDate(ticket, 'cloture')))
     const averageDays = averageNumbers(
       durations,
@@ -1518,6 +1935,8 @@ function stagePerformanceLabel(stage: StageMetric) {
 
 function getTicketDate(ticket: DashboardTicket, step: string) {
   const raw = ticket.raw
+  if (isRejectedTicket(ticket) && (step === 'achat' || step === 'cloture')) return null
+  if (hasWorkflowSource(raw)) return parseDateValue(workflowStepDateValue(raw, step))
   const value =
     step === 'creation'
       ? ticket.dateCreationRaw
@@ -1559,33 +1978,132 @@ function metricTone(value: number | null): ProcessAnalysis['global'][number]['to
 }
 
 function timelineDateForStep(key: string, ticket: DashboardTicket, done: boolean) {
-  if (!done && key !== 'creation') return 'À venir'
-
   const raw = ticket.raw
+  if (hasWorkflowSource(raw)) {
+    const value = workflowStepDateValue(raw, key)
+    if (!done && value === undefined) return 'À venir'
+    return formatTicketDetailDate(value)
+  }
   const value =
     key === 'creation'
       ? ticket.dateCreationRaw
       : key === 'validation'
-        ? firstValue(raw, ['date_validation', 'validatedAt', 'validationDate'])
+        ? firstValue(raw, ['date_validation', 'validatedAt', 'validationDate', 'validation_date'])
         : key === 'assignation'
-          ? firstValue(raw, ['date_assignation', 'assignedAt', 'datePriseEnCharge', 'takenInChargeAt'])
+          ? firstValue(raw, ['date_assignation', 'assignedAt', 'datePriseEnCharge', 'takenInChargeAt', 'attribution_date'])
           : key === 'achat'
-            ? firstValue(raw, ['purchase_date', 'date_achat', 'achatEffectueAt']) ?? ticket.dateResolutionRaw
-            : firstValue(raw, ['closedate', 'closedAt']) ?? ticket.dateResolutionRaw
+            ? firstValue(raw, ['purchase_date', 'date_achat', 'achatEffectueAt', 'solution_date']) ?? ticket.dateResolutionRaw
+            : firstValue(raw, ['closedate', 'closedAt', 'resolution_date', 'date_cloture']) ?? ticket.dateResolutionRaw
 
+  if (!done && value === undefined) return 'À venir'
   return formatTicketDetailDate(value)
+}
+
+function timelineTimestamp(key: string, ticket: DashboardTicket) {
+  const raw = ticket.raw
+  if (hasWorkflowSource(raw)) return parseDateValue(workflowStepDateValue(raw, key))
+  const value = key === 'creation' ? ticket.dateCreationRaw
+    : key === 'validation' ? firstValue(raw, ['date_validation', 'validatedAt', 'validationDate', 'validation_date'])
+      : key === 'assignation' ? firstValue(raw, ['date_assignation', 'assignedAt', 'datePriseEnCharge', 'takenInChargeAt', 'attribution_date'])
+        : key === 'achat' ? firstValue(raw, ['purchase_date', 'date_achat', 'achatEffectueAt', 'solution_date']) ?? ticket.dateResolutionRaw
+          : firstValue(raw, ['closedate', 'closedAt', 'resolution_date', 'date_cloture']) ?? ticket.dateResolutionRaw
+  return parseDateValue(value)
+}
+
+function formatWorkflowDuration(from: Date | null, to: Date | null) {
+  if (!from || !to || to.getTime() < from.getTime()) return null
+  const totalMinutes = Math.floor((to.getTime() - from.getTime()) / 60_000)
+  const days = Math.floor(totalMinutes / 1440)
+  const hours = Math.floor((totalMinutes % 1440) / 60)
+  const minutes = totalMinutes % 60
+  if (days > 0) return `${days} j ${hours} h`
+  if (hours > 0) return `${hours} h ${minutes} min`
+  return `${minutes} min`
+}
+
+function workflowDurationMinutes(from: Date | null, to: Date | null) {
+  if (!from || !to || to.getTime() < from.getTime()) return null
+  return Math.floor((to.getTime() - from.getTime()) / 60_000)
+}
+
+function workflowStepRecords(workflow: WorkflowData | null) {
+  const items = workflow ? firstValue(workflow, ['etapes']) : undefined
+  if (!Array.isArray(items)) return []
+  return items.filter((item): item is WorkflowData => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+}
+
+function workflowTimelineKey(value: string) {
+  if (/r[ée]solution|cl[oô]ture|livraison|ferm/.test(value)) return 'cloture'
+  if (/attrib|assign/.test(value)) return 'assignation'
+  if (/solution|achat/.test(value)) return 'achat'
+  if (/valid/.test(value)) return 'validation'
+  return 'creation'
+}
+
+function workflowTimelineState(status: string, index: number, items: WorkflowData[], rejected = false): TimelineStepState {
+  if (rejected) return 'rejected'
+  if (/done|completed|closed|resolved/.test(status)) return 'done'
+  if (/current|progress|active|pending|assigned|todo|open/.test(status)) {
+    return items.slice(0, index).some((step) => /current|progress|active|pending|assigned|todo|open/.test(stringValue(firstValue(step, ['statut'])).toLowerCase()))
+      ? 'pending'
+      : 'current'
+  }
+  const priorCurrent = items.slice(0, index).some((step) => /current|progress|active|pending|assigned|todo|open/.test(stringValue(firstValue(step, ['statut'])).toLowerCase()))
+  return priorCurrent ? 'pending' : 'current'
+}
+
+function workflowStepIsRejected(step: WorkflowData) {
+  return ['statut', 'detail', 'decision', 'resultat', 'status', 'state', 'label']
+    .some((key) => isRejectedWorkflowValue(step[key]))
+}
+
+function workflowIsRejected(workflow: WorkflowData | null) {
+  if (!workflow) return false
+  return ['statut_global', 'global_status', 'statut', 'status', 'detail', 'decision', 'resultat']
+    .some((key) => isRejectedWorkflowValue(workflow[key]))
+}
+
+function workflowRejectedStepIndex(items: WorkflowData[]) {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const step = items[index]
+    if (firstValue(step, ['date', 'acteur', 'detail']) !== undefined) return index
+  }
+  return items.findIndex((step) => workflowTimelineKey(stringValue(firstValue(step, ['etape'])).toLowerCase()) === 'validation')
+}
+
+function isRejectedWorkflowValue(value: unknown) {
+  return /refused|rejected|rejet|refus/.test(stringValue(value).toLowerCase())
+}
+
+function timelineDefaultLabel(key: string) {
+  if (key === 'creation') return 'Demande créée'
+  if (key === 'validation') return 'Validé'
+  if (key === 'assignation') return 'Assigné à un acheteur'
+  if (key === 'achat') return 'En cours de traitement'
+  return 'Livré'
+}
+
+function timelineRoleLabel(key: string) {
+  if (key === 'creation') return 'Createur'
+  if (key === 'validation') return 'Validateur'
+  if (key === 'assignation') return 'Acheteur assigne'
+  if (key === 'achat') return 'Acheteur'
+  return 'Cloture'
 }
 
 function timelineUserForStep(key: string, ticket: DashboardTicket) {
   const raw = ticket.raw
-  const fallbackRequester = stringValue(firstValue(raw, ['demandeur', 'requester', 'createdBy', 'auteur'])) || 'Demandeur'
+  if (hasWorkflowSource(raw)) return actorName(workflowStepActorValue(raw, key))
+  const fallbackRequester = stringValue(firstValue(raw, ['demandeur', 'requester', 'createdBy', 'auteur', 'creator', 'created_by', 'requester_name'])) || 'Demandeur'
   const fallbackBuyer = hasAssignedBuyer(ticket.acheteur) ? ticket.acheteur : 'Non assigné'
 
   if (key === 'creation') return fallbackRequester
-  if (key === 'validation') return stringValue(firstValue(raw, ['validateur', 'validator', 'validatedBy'])) || 'Validateur'
-  if (key === 'assignation') return fallbackBuyer
-  if (key === 'achat') return fallbackBuyer
-  return stringValue(firstValue(raw, ['closedBy', 'cloturePar'])) || fallbackBuyer
+  if (key === 'validation') return stringValue(firstValue(raw, ['validateur', 'validator', 'validatedBy', 'validation_actor', 'approvedBy', 'approved_by'])) || 'Validateur'
+  if (key === 'assignation') {
+    return stringValue(firstValue(raw, ['assignedTo', 'assigned_to', 'buyer', 'acheteur_assigne', 'attributedBy', 'assignedBy', 'attribution_actor'])) || fallbackBuyer
+  }
+  if (key === 'achat') return stringValue(firstValue(raw, ['buyer', 'acheteur_assigne', 'purchase_actor', 'processedBy'])) || fallbackBuyer
+  return stringValue(firstValue(raw, ['closedBy', 'cloturePar', 'resolvedBy', 'resolution_actor'])) || fallbackBuyer
 }
 
 function hasAssignedBuyer(value: string) {
@@ -1599,6 +2117,25 @@ function firstValue(record: Record<string, unknown>, keys: string[]) {
     if (value !== null && value !== undefined && value !== '') return value
   }
   return undefined
+}
+
+function hasWorkflowSource(record: Record<string, unknown>) {
+  return record[WORKFLOW_SOURCE_FLAG] === true
+}
+
+function workflowStepPrefix(key: string) {
+  if (key === 'assignation') return 'attribution'
+  if (key === 'achat') return 'solution'
+  if (key === 'cloture') return 'resolution'
+  return key
+}
+
+function workflowStepDateValue(record: Record<string, unknown>, key: string) {
+  return firstValue(record, [`${workflowStepPrefix(key)}_date`])
+}
+
+function workflowStepActorValue(record: Record<string, unknown>, key: string) {
+  return firstValue(record, [`${workflowStepPrefix(key)}_actor`])
 }
 
 function hasKnownDate(record: Record<string, unknown>, keys: string[]) {
@@ -1615,10 +2152,12 @@ function getLastTimelineUpdate(steps: TimelineStep[]) {
   return updated?.date ?? '-'
 }
 
-function getElapsedSinceCreation(ticket: DashboardTicket | null) {
-  if (!ticket?.dateCreationRaw) return '-'
+function getElapsedSinceCreation(ticket: DashboardTicket | null, workflow?: WorkflowData | null) {
+  const workflowData = workflow ? flattenWorkflow(workflow) : null
+  const source = workflowData?.creation_date ?? ticket?.dateCreationRaw
+  if (!source) return '-'
 
-  const date = parseDateValue(ticket.dateCreationRaw)
+  const date = parseDateValue(source)
   if (!date) return '-'
 
   const days = Math.max(0, Math.floor((Date.now() - date.getTime()) / 86_400_000))
@@ -1690,6 +2229,83 @@ function formatTicketDetailDate(value: unknown) {
   }).format(date)
 
   return formatted.charAt(0).toUpperCase() + formatted.slice(1)
+}
+
+function DelayBadge({ ticket }: { ticket: DashboardTicket }) {
+  const status = calculateDelayStatus(ticket.raw, ticket.dateResolutionRaw)
+  const tone = status.isLate ? 'bg-red-50 text-red-700' : 'bg-green-50 text-green-700'
+  return <span className={`ml-2 inline-flex rounded-lg px-2 py-1 text-[11px] font-semibold ${tone}`}>{status.label}</span>
+}
+
+function calculateDelayStatus(raw: Record<string, unknown>, resolutionOverride?: unknown) {
+  if (isTicketRejected(raw)) return { isLate: false, label: 'Rejeté' }
+
+  const deadline = parseDateValue(firstValue(raw, ['time_to_resolve', 'date_livraison_souhaitee', 'delivery_date', 'date_echeance', 'dateEcheance', 'deadline', 'echeance']))
+  const closedAt = parseDateValue(resolutionOverride ?? firstValue(raw, ['closedate', 'closedAt', 'date_resolution', 'dateResolution', 'solvedate']))
+  const closed = Boolean(closedAt) || Number(raw.status ?? 0) >= 6
+  if (!deadline) return { isLate: false, label: closed ? 'Terminé' : 'Délai non renseigné' }
+  const comparison = closedAt ?? new Date()
+  const late = comparison.getTime() > deadline.getTime()
+  return { isLate: late, label: closed ? (late ? 'Terminé en retard' : 'Terminé dans les délais') : (late ? 'En retard' : 'Dans les délais') }
+}
+
+function unwrapWorkflow(payload: unknown): WorkflowData {
+  if (!payload || typeof payload !== 'object') return {}
+  const record = payload as WorkflowData
+  const nested = record.workflow ?? record.data
+  return nested && typeof nested === 'object' && !Array.isArray(nested) ? nested as WorkflowData : record
+}
+
+function flattenWorkflow(workflow: WorkflowData) {
+  const flattened: WorkflowData = { ...workflow }
+  const aliases: Record<string, string> = { creation: 'creation', validation: 'validation', attribution: 'attribution', assignation: 'attribution', solution: 'solution', resolution: 'resolution' }
+  for (const [source, prefix] of Object.entries(aliases)) {
+    const step = workflow[source]
+    if (!step || typeof step !== 'object' || Array.isArray(step)) continue
+    const item = step as WorkflowData
+    flattened[`${prefix}_date`] = firstValue(item, ['date', 'at', 'created_at', 'completed_at'])
+    flattened[`${prefix}_actor`] = actorName(firstValue(item, ['actor', 'user', 'performed_by', 'auteur']))
+  }
+  const steps = firstValue(workflow, ['steps', 'etapes', 'history', 'historique'])
+  if (Array.isArray(steps)) {
+    for (const rawStep of steps) {
+      if (!rawStep || typeof rawStep !== 'object' || Array.isArray(rawStep)) continue
+      const step = rawStep as WorkflowData
+      const name = stringValue(firstValue(step, ['key', 'type', 'name', 'label', 'etape', 'step'])).toLowerCase()
+      const prefix = /cr[ée]ation/.test(name) ? 'creation'
+        : /valid/.test(name) ? 'validation'
+          : /attrib|assign/.test(name) ? 'attribution'
+            : /solution|achat/.test(name) ? 'solution'
+              : /r[ée]solution|cl[oô]ture|ferm/.test(name) ? 'resolution'
+                : ''
+      if (!prefix) continue
+      flattened[`${prefix}_date`] = firstValue(step, ['date', 'at', 'created_at', 'completed_at', 'date_etape'])
+      flattened[`${prefix}_actor`] = actorName(firstValue(step, ['actor', 'user', 'performed_by', 'auteur', 'utilisateur']))
+    }
+  }
+  flattened.demandeur = flattened.creation_actor ?? flattened.demandeur
+  flattened.validateur = flattened.validation_actor ?? flattened.validateur
+  flattened.attributedBy = flattened.attribution_actor ?? flattened.attributedBy
+  return flattened
+}
+
+function timelineDateLabel(key: string) {
+  if (key === 'creation') return 'Créé le'
+  if (key === 'validation') return 'Validé le'
+  if (key === 'assignation') return 'Attribué le'
+  if (key === 'achat') return 'Achat effectué le'
+  return 'Clôturé le'
+}
+
+function workflowBuyer(workflow: WorkflowData) {
+  return actorName(firstValue(workflow, ['acheteur_assigne', 'assigned_buyer', 'buyer', 'acheteur']))
+}
+
+function actorName(value: unknown): string {
+  if (!value) return ''
+  if (typeof value === 'string') return value
+  if (typeof value === 'object' && !Array.isArray(value)) return stringValue(firstValue(value as WorkflowData, ['name', 'full_name', 'display_name', 'nom']))
+  return String(value)
 }
 
 

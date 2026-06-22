@@ -180,7 +180,7 @@ function SectionGraphiques({
             <span className="inline-block h-2 w-2 rounded-sm bg-blue-600" />Créés
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 rounded-sm bg-green-700" />Clôturés
+            <span className="inline-block h-2 w-2 rounded-sm bg-green-700" />Clos
           </span>
         </div>
         <ResponsiveContainer width="100%" height={130}>
@@ -190,7 +190,7 @@ function SectionGraphiques({
             <YAxis tick={{ fontSize: 11, fill: '#888' }} axisLine={false} tickLine={false} />
             <Tooltip />
             <Bar dataKey="crees" fill="#185FA5" radius={[4, 4, 0, 0]} name="Créés" />
-            <Bar dataKey="clotures" fill="#3B6D11" radius={[4, 4, 0, 0]} name="Clôturés" />
+            <Bar dataKey="clotures" fill="#3B6D11" radius={[4, 4, 0, 0]} name="Clos" />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -202,7 +202,7 @@ function SectionGraphiques({
             <span className="inline-block h-2 w-2 rounded-sm bg-blue-600" />Créés
           </span>
           <span className="flex items-center gap-1.5">
-            <span className="inline-block h-2 w-2 rounded-sm bg-green-700" />Clôturés
+            <span className="inline-block h-2 w-2 rounded-sm bg-green-700" />Clos
           </span>
           <span className="flex items-center gap-1.5">
             <span className="inline-block h-2 w-2 rounded-sm bg-amber-600" />En retard
@@ -221,7 +221,7 @@ function SectionGraphiques({
             <YAxis tick={{ fontSize: 11, fill: '#888' }} axisLine={false} tickLine={false} />
             <Tooltip />
             <Area type="monotone" dataKey="crees" stroke="#185FA5" strokeWidth={2} fill="url(#gcrees)" name="Créés" dot={{ r: 3 }} />
-            <Area type="monotone" dataKey="clotures" stroke="#3B6D11" strokeWidth={2} fill="none" name="Clôturés" dot={{ r: 3 }} />
+            <Area type="monotone" dataKey="clotures" stroke="#3B6D11" strokeWidth={2} fill="none" name="Clos" dot={{ r: 3 }} />
             <Area type="monotone" dataKey="retards" stroke="#BA7517" strokeWidth={2} strokeDasharray="4 3" fill="none" name="En retard" dot={{ r: 3 }} />
           </AreaChart>
         </ResponsiveContainer>
@@ -238,7 +238,7 @@ function SectionAcheteurs({ items }: { items: Array<{ name: string; count: numbe
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-neutral-100">
-              {['Acheteur', 'En cours', 'Retards', 'Clôturés', 'Charge'].map((h) => (
+              {['Acheteur', 'En cours de traitement', 'Retards', 'Clos', 'Charge'].map((h) => (
                 <th
                   key={h}
                   className={`pb-2 text-xs font-normal text-neutral-400 ${h === 'Acheteur' || h === 'Charge' ? 'text-left' : 'text-center'}`}
@@ -375,8 +375,8 @@ function DashboardResponsableContent() {
   })
 
   const pieData: PieItem[] = [
-    { name: 'Clôturés', value: kpis.resolved ?? 0 },
-    { name: 'En cours', value: kpis.open ?? 0 },
+    { name: 'Clos', value: kpis.resolved ?? 0 },
+    { name: 'En cours de traitement', value: kpis.open ?? 0 },
     { name: 'En retard', value: kpis.late ?? 0 },
     { name: 'Rejetés', value: kpis.rejected ?? 0 },
   ]

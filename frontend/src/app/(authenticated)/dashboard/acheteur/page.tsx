@@ -5,12 +5,13 @@ import Link from 'next/link'
 import { AlertCircle, CheckCircle2, FileText, UploadCloud } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/card'
 import { useTicketsList } from '@/app/hooks/useTicketsList'
+import { resolveTicketBusinessStatus, type TicketBusinessStatus } from '@/app/lib/ticket-business-status'
 
 
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type TicketStatus = 'créé' | 'en cours' | 'clôturé' | 'rejeté'
+type TicketStatus = 'créé' | 'assigné' | 'en cours' | 'clôturé' | 'rejeté'
 type Priority = 'normal' | 'urgent'
 
 
@@ -217,6 +218,7 @@ function formatAmount(n: number) {
 function statusClasses(s: string) {
   const map: Record<string, string> = {
     'créé':     'bg-blue-50 text-blue-700 border border-blue-200',
+    'assigné': 'bg-blue-50 text-blue-700 border border-blue-200',
     'en cours': 'bg-amber-50 text-amber-700 border border-amber-200',
     'clôturé':  'bg-green-50 text-green-700 border border-green-200',
     'rejeté':   'bg-red-50 text-red-700 border border-red-200',
@@ -227,9 +229,17 @@ function statusClasses(s: string) {
 
 function statusLabel(s: string) {
   const map: Record<string, string> = {
-    'créé': 'Créé', 'en cours': 'En cours', 'clôturé': 'Clôturé', 'rejeté': 'Rejeté', 'urgent': 'Urgent',
+    'créé': 'Créé', 'assigné': 'Assigné', 'en cours': 'En cours de traitement', 'clôturé': 'Clos', 'rejeté': 'Rejeté', 'urgent': 'Urgent',
   }
   return map[s] ?? s
+}
+
+function toBuyerTicketStatus(status: TicketBusinessStatus): TicketStatus {
+  if (status === 'Créé') return 'créé'
+  if (status === 'Assigné') return 'assigné'
+  if (status === 'En cours de traitement') return 'en cours'
+  if (status === 'Clos') return 'clôturé'
+  return 'rejeté'
 }
 
 // ─── Micro-composants ─────────────────────────────────────────────────────────
@@ -562,7 +572,7 @@ function TicketModal({
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-neutral-400">Mettre à jour le statut</p>
                 <div className="flex flex-wrap gap-2">
-                  {(['créé', 'en cours', 'clôturé', 'rejeté'] as TicketStatus[]).map((s) => (
+                  {(['créé', 'assigné', 'en cours', 'clôturé', 'rejeté'] as TicketStatus[]).map((s) => (
                     <button
                       key={s}
                       onClick={() => setStatus(s)}
@@ -851,7 +861,7 @@ function DashboardAcheteurContent() {
         reference: String(t.reference ?? t.titre ?? ''),
         title: String(t.title ?? t.titre ?? ''),
         project: String(t.project ?? 'Non assigné'),
-        status: (t.statut ?? t.status ?? 'en cours') as TicketStatus,
+        status: toBuyerTicketStatus(resolveTicketBusinessStatus(t as Record<string, unknown>)),
         priority: (t.priorite ?? t.priority ?? 'normal') as Priority,
         assignedTo: String(t.acheteur ?? t.assignedTo ?? 'Non assigné'),
         assignedManually: Boolean(t.assignedManually ?? false),
@@ -910,8 +920,9 @@ function DashboardAcheteurContent() {
   const statusFilters = [
     { key: 'tous', label: 'Tous', count: tickets.length },
     { key: 'créé', label: 'Créés', count: tickets.filter((t) => t.status === 'créé').length },
-    { key: 'en cours', label: 'En cours', count: tickets.filter((t) => t.status === 'en cours').length },
-    { key: 'clôturé', label: 'Clôturés', count: tickets.filter((t) => t.status === 'clôturé').length },
+    { key: 'assigné', label: 'Assignés', count: tickets.filter((t) => t.status === 'assigné').length },
+    { key: 'en cours', label: 'En cours de traitement', count: tickets.filter((t) => t.status === 'en cours').length },
+    { key: 'clôturé', label: 'Clos', count: tickets.filter((t) => t.status === 'clôturé').length },
     { key: 'rejeté', label: 'Rejetés', count: tickets.filter((t) => t.status === 'rejeté').length },
   ]
 

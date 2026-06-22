@@ -40,11 +40,11 @@ const demandes: Demande[] = [
 // ─── Config statuts ───────────────────────────────────────────────────────────
 
 const statutConfig: Record<StatutDemande, { label: string; color: string; bg: string; dot: string }> = {
-  en_attente:        { label: 'En attente',                   color: 'text-ades-yellow',  bg: 'bg-yellow-50',   dot: 'bg-ades-yellow' },
-  attribue:          { label: 'Attribué',                     color: 'text-orange-500',   bg: 'bg-orange-50',   dot: 'bg-orange-500' },
-  circuit_validation:{ label: 'En circuit de validation Odoo',color: 'text-blue-600',     bg: 'bg-blue-50',     dot: 'bg-blue-600' },
-  valide_commande:   { label: 'Validé et Commandé',           color: 'text-info-600',     bg: 'bg-cyan-50',     dot: 'bg-info-600' },
-  cloture:           { label: 'Clôturé',                      color: 'text-neutral-500',  bg: 'bg-neutral-50',  dot: 'bg-neutral-400' },
+  en_attente:        { label: 'Créé',                   color: 'text-ades-yellow',  bg: 'bg-yellow-50',   dot: 'bg-ades-yellow' },
+  attribue:          { label: 'Assigné',                color: 'text-orange-500',   bg: 'bg-orange-50',   dot: 'bg-orange-500' },
+  circuit_validation:{ label: 'Créé',                   color: 'text-blue-600',     bg: 'bg-blue-50',     dot: 'bg-blue-600' },
+  valide_commande:   { label: 'En cours de traitement', color: 'text-info-600',     bg: 'bg-cyan-50',     dot: 'bg-info-600' },
+  cloture:           { label: 'Clos',                   color: 'text-neutral-500',  bg: 'bg-neutral-50',  dot: 'bg-neutral-400' },
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -103,7 +103,7 @@ export default function DashboardDemandeurPage() {
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <Card className="card-ades">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-neutral-600">En attente</CardTitle>
+            <CardTitle className="text-sm font-medium text-neutral-600">Créé</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-4xl font-bold text-ades-yellow">{enAttente}</div>
@@ -113,7 +113,7 @@ export default function DashboardDemandeurPage() {
 
         <Card className="card-ades">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-neutral-600">Attribué</CardTitle>
+            <CardTitle className="text-sm font-medium text-neutral-600">Assigné</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-4xl font-bold text-orange-500">{attribue}</div>
@@ -123,7 +123,7 @@ export default function DashboardDemandeurPage() {
 
         <Card className="card-ades">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-neutral-600">Circuit validation Odoo</CardTitle>
+            <CardTitle className="text-sm font-medium text-neutral-600">Créé</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-4xl font-bold text-blue-600">{circuitValidation}</div>
@@ -133,7 +133,7 @@ export default function DashboardDemandeurPage() {
 
         <Card className="card-ades">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-neutral-600">Validé et Commandé</CardTitle>
+            <CardTitle className="text-sm font-medium text-neutral-600">En cours de traitement</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-4xl font-bold text-info-600">{valideCommande}</div>
@@ -143,7 +143,7 @@ export default function DashboardDemandeurPage() {
 
         <Card className="card-ades">
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium text-neutral-600">Clôturé</CardTitle>
+            <CardTitle className="text-sm font-medium text-neutral-600">Clos</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-4xl font-bold text-neutral-400">{cloture}</div>
@@ -214,7 +214,7 @@ export default function DashboardDemandeurPage() {
               <div className="flex items-center justify-between rounded-3xl border border-[rgba(76,139,64,0.12)] bg-white/90 px-4 py-3">
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-ades-yellow" />
-                  <span>En attente</span>
+                  <span>Créé</span>
                 </div>
                 <span className="font-semibold text-ades-yellow">{enAttente}</span>
               </div>
@@ -223,7 +223,7 @@ export default function DashboardDemandeurPage() {
               <div className="flex items-center justify-between rounded-3xl border border-[rgba(76,139,64,0.12)] bg-white/90 px-4 py-3">
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-orange-500" />
-                  <span>Attribué à un responsable</span>
+                  <span>Assigné</span>
                 </div>
                 <span className="font-semibold text-orange-500">{attribue}</span>
               </div>
@@ -232,7 +232,7 @@ export default function DashboardDemandeurPage() {
               <div className="flex items-center justify-between rounded-3xl border border-[rgba(76,139,64,0.12)] bg-white/90 px-4 py-3">
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-blue-600" />
-                  <span>En circuit de validation Odoo</span>
+                  <span>Créé</span>
                 </div>
                 <span className="font-semibold text-blue-600">{circuitValidation}</span>
               </div>
@@ -241,7 +241,7 @@ export default function DashboardDemandeurPage() {
               <div className="flex items-center justify-between rounded-3xl border border-[rgba(76,139,64,0.12)] bg-white/90 px-4 py-3">
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-info-600" />
-                  <span>Validé et Commandé</span>
+                  <span>En cours de traitement</span>
                 </div>
                 <span className="font-semibold text-info-600">{valideCommande}</span>
               </div>
@@ -250,7 +250,7 @@ export default function DashboardDemandeurPage() {
               <div className="flex items-center justify-between rounded-3xl border border-[rgba(76,139,64,0.12)] bg-white/90 px-4 py-3">
                 <div className="flex items-center gap-2">
                   <span className="h-2 w-2 rounded-full bg-neutral-400" />
-                  <span>Clôturé</span>
+                  <span>Clos</span>
                 </div>
                 <span className="font-semibold text-neutral-500">{cloture}</span>
               </div>
@@ -311,18 +311,18 @@ export default function DashboardDemandeurPage() {
           <div className="mt-6 rounded-3xl border border-[rgba(76,139,64,0.12)] bg-white/90 p-4">
             <p className="mb-3 text-xs font-medium text-neutral-500">Répartition globale ({total} demandes)</p>
             <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-neutral-100">
-              <div className="bg-ades-yellow"       style={{ width: `${(enAttente / total) * 100}%` }} title="En attente" />
-              <div className="bg-orange-500"         style={{ width: `${(attribue / total) * 100}%` }} title="Attribué" />
-              <div className="bg-blue-600"           style={{ width: `${(circuitValidation / total) * 100}%` }} title="Circuit validation" />
-              <div className="bg-info-600"           style={{ width: `${(valideCommande / total) * 100}%` }} title="Validé et commandé" />
-              <div className="bg-neutral-300"        style={{ width: `${(cloture / total) * 100}%` }} title="Clôturé" />
+              <div className="bg-ades-yellow"       style={{ width: `${(enAttente / total) * 100}%` }} title="Créé" />
+              <div className="bg-orange-500"         style={{ width: `${(attribue / total) * 100}%` }} title="Assigné" />
+              <div className="bg-blue-600"           style={{ width: `${(circuitValidation / total) * 100}%` }} title="Créé" />
+              <div className="bg-info-600"           style={{ width: `${(valideCommande / total) * 100}%` }} title="En cours de traitement" />
+              <div className="bg-neutral-300"        style={{ width: `${(cloture / total) * 100}%` }} title="Clos" />
             </div>
             <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-neutral-500">
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-ades-yellow"/>En attente</span>
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-500"/>Attribué</span>
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-blue-600"/>Circuit Odoo</span>
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-info-600"/>Validé/Commandé</span>
-              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-neutral-300"/>Clôturé</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-ades-yellow"/>Créé</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-orange-500"/>Assigné</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-blue-600"/>Créé</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-info-600"/>En cours de traitement</span>
+              <span className="flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-neutral-300"/>Clos</span>
             </div>
           </div>
         </CardContent>
