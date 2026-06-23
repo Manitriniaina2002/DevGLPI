@@ -412,7 +412,7 @@ function DashboardResponsableContent() {
 
       {error && (
         <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-800">
-          Erreur chargement dashboard : {error}
+          Impossible de charger les données du dashboard pour le moment.
         </div>
       )}
 

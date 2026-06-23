@@ -34,7 +34,7 @@ import { isTicketRejected, resolveTicketBusinessStatus, type TicketBusinessStatu
 
 type QuickTicketFilter = 'all' | 'rejected' | 'late'
 type TimelineStepState = 'done' | 'current' | 'pending' | 'rejected'
-type PerformanceSort = 'score' | 'avg' | 'count' | 'sla'
+type PerformanceSort = 'score' | 'avg' | 'count'
 const WORKFLOW_SOURCE_FLAG = '__workflow_source'
 const WORKFLOW_TIMELINE_LABELS = [
   { key: 'creation', label: 'Création de la demande' },
@@ -122,6 +122,11 @@ interface ProcessAnalysis {
   buyers: ActorPerformance[]
   validators: ActorPerformance[]
   blockers: BlockedTicket[]
+  summary: {
+    totalTickets: number
+    lateTickets: number
+    blockedTickets: number
+  }
 }
 
 interface WorkflowKpi {
@@ -161,13 +166,14 @@ export default function DashboardPage() {
   const [workflowLoading, setWorkflowLoading] = useState(false)
   const [workflowError, setWorkflowError] = useState<string | null>(null)
   const [workflowTicketStatuses, setWorkflowTicketStatuses] = useState<Record<string, TicketBusinessStatus>>({})
+  const [processWorkflows, setProcessWorkflows] = useState<Record<string, WorkflowData>>({})
   const [activeDashboardTab, setActiveDashboardTab] = useState('process')
   const [ticketPage, setTicketPage] = useState(1)
   const [ticketPageSize, setTicketPageSize] = useState<(typeof ticketPageSizeOptions)[number]>(25)
   const [projectOptions, setProjectOptions] = useState<string[]>([])
   const [buyerOptions, setBuyerOptions] = useState<string[]>([])
   const [buyerSort, setBuyerSort] = useState<PerformanceSort>('score')
-  const [validatorSort, setValidatorSort] = useState<PerformanceSort>('avg')
+  const [validatorSort, setValidatorSort] = useState<PerformanceSort>('score')
   const { setHeaderActions } = useHeaderActions()
 
   const { summary, loading, error } = useDashboardSummary({
@@ -181,7 +187,6 @@ export default function DashboardPage() {
     to: dateTo || undefined,
     projet: project === 'all' ? undefined : project,
     acheteur: buyer === 'all' ? undefined : buyer,
-    late_only: quickFilter === 'late' ? true : undefined,
   })
   const { tickets: scopedApiTickets } = useTicketsList({
     per_page: 1000,
@@ -242,6 +247,43 @@ export default function DashboardPage() {
     return () => controller.abort()
   }, [scopedTickets])
   useEffect(() => {
+    if (tickets.length === 0) {
+      setProcessWorkflows({})
+      return
+    }
+
+    const controller = new AbortController()
+    const workflows: Record<string, WorkflowData> = {}
+    let cursor = 0
+
+    async function worker() {
+      while (!controller.signal.aborted) {
+        const ticket = tickets[cursor]
+        cursor += 1
+        if (!ticket) return
+
+        try {
+          const token = localStorage.getItem('auth_token')
+          const response = await fetch(`${getApiBase()}/api/tickets/${encodeURIComponent(ticket.id)}/workflow`, {
+            credentials: 'include',
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+            signal: controller.signal,
+          })
+          if (!response.ok) continue
+          workflows[ticket.id] = unwrapWorkflow(await response.json())
+        } catch {
+          if (controller.signal.aborted) return
+        }
+      }
+    }
+
+    Promise.all(Array.from({ length: Math.min(6, tickets.length) }, () => worker())).then(() => {
+      if (!controller.signal.aborted) setProcessWorkflows(workflows)
+    })
+
+    return () => controller.abort()
+  }, [tickets])
+  useEffect(() => {
     setProjectOptions((current) => uniqueSorted([...current, ...projects]))
   }, [projects])
   useEffect(() => {
@@ -253,9 +295,9 @@ export default function DashboardPage() {
     if (quickFilter === 'rejected') {
       return scopedTickets.filter((ticket) => getResolvedTicketStatus(ticket, workflowTicketStatuses) === 'Rejeté')
     }
-    if (quickFilter === 'late') return tickets
+    if (quickFilter === 'late') return scopedTickets.filter((ticket) => ticket.isLate)
     return scopedTickets
-  }, [quickFilter, scopedTickets, tickets, workflowTicketStatuses])
+  }, [quickFilter, scopedTickets, workflowTicketStatuses])
   const visibleTickets = useMemo(() => {
     const query = search.trim().toLowerCase()
     if (!query) return quickFilteredTickets
@@ -278,11 +320,16 @@ export default function DashboardPage() {
     () => buildWorkflowKpis(quickFilteredTickets, workflowTicketStatuses),
     [quickFilteredTickets, workflowTicketStatuses],
   )
+  const processMetricTickets = useMemo(
+    () => tickets.map((ticket) => enrichTicketWithWorkflow(ticket, processWorkflows[ticket.id] ?? null)),
+    [tickets, processWorkflows],
+  )
   const globalWorkflowProgress = useMemo(
     () => buildWorkflowProgress(scopedTickets, quickFilter, workflowTicketStatuses),
     [scopedTickets, quickFilter, workflowTicketStatuses],
   )
-  const processAnalysis = useMemo(() => buildProcessAnalysis(tickets), [tickets])
+  const progressBlockTone = workflowProgressTone(globalWorkflowProgress)
+  const processAnalysis = useMemo(() => buildProcessAnalysis(processMetricTickets), [processMetricTickets])
   const selectedTimelineSteps = useMemo(() => buildTimelineSteps(selectedTicket, selectedWorkflow), [selectedTicket, selectedWorkflow])
 
   useEffect(() => {
@@ -322,6 +369,10 @@ export default function DashboardPage() {
   const sortedValidators = useMemo(
     () => sortActorPerformance(processAnalysis.validators, validatorSort),
     [processAnalysis.validators, validatorSort],
+  )
+  const sortedBuyers = useMemo(
+    () => sortActorPerformance(processAnalysis.buyers, buyerSort),
+    [processAnalysis.buyers, buyerSort],
   )
   const hasFilters =
     dateFrom !== '' ||
@@ -445,12 +496,12 @@ export default function DashboardPage() {
   }, [headerFilters, setHeaderActions])
 
   return (
-    <div className="min-h-screen space-y-5 bg-[radial-gradient(circle_at_top_left,rgba(20,184,166,0.08),transparent_28rem),linear-gradient(180deg,#f8fafc_0%,#ffffff_38%)] px-2 py-3 text-neutral-950 sm:px-4 lg:px-6">
-      <div className="mt-6">
+    <div className="space-y-5 text-neutral-950">
+      <div className={`mt-6 rounded-[28px] border px-4 py-4 shadow-[0_22px_55px_rgba(15,23,42,0.08)] backdrop-blur sm:px-5 sm:py-5 ${progressBlockTone.shell}`}>
         <WorkflowKpiOverview kpis={workflowKpis} progress={globalWorkflowProgress} />
       </div>
 
-      <Tabs value={activeDashboardTab} onValueChange={setActiveDashboardTab} className="gap-3">
+      <Tabs value={activeDashboardTab} onValueChange={setActiveDashboardTab} className="mt-6 gap-3 overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-[0_18px_45px_rgba(15,23,42,0.05)]">
         <TabsList className="hidden">
           <TabsTrigger value="process" className="px-4">
             <BarChart3 className="size-4" />
@@ -481,7 +532,9 @@ export default function DashboardPage() {
                   {ticketsLoading
                     ? 'Chargement des tickets...'
                     : ticketsError
-                      ? `Erreur: ${ticketsError}`
+                      ? 'Impossible de charger les tickets'
+                      : tickets.length === 0
+                        ? 'Aucun ticket'
                       : `${visibleTickets.length}/${tickets.length} ticket${tickets.length > 1 ? 's' : ''} affiché${visibleTickets.length > 1 ? 's' : ''}`}
                 </p>
               </div>
@@ -492,9 +545,25 @@ export default function DashboardPage() {
         <CardContent className="bg-slate-50/40 px-3 py-3 sm:px-4 sm:py-4 lg:px-5">
         <TabsContent value="tickets" className="m-0 space-y-3 data-[state=active]:animate-in data-[state=active]:fade-in-0 data-[state=active]:duration-200">
           {visibleTickets.length === 0 ? (
-            <p className="py-10 text-center text-sm text-neutral-400">
-              {ticketsLoading ? 'Chargement des tickets...' : 'Aucun ticket ne correspond aux filtres.'}
-            </p>
+            <div className="flex min-h-[320px] flex-col items-center justify-center rounded-lg border border-dashed border-slate-200 bg-white px-6 py-10 text-center">
+              <div className="flex size-12 items-center justify-center rounded-lg bg-slate-50 text-slate-400">
+                <FileText className="size-6" />
+              </div>
+              <p className="mt-4 text-sm font-semibold text-neutral-800">
+                {ticketsLoading
+                  ? 'Chargement des tickets...'
+                  : hasFilters
+                    ? 'Aucun ticket ne correspond aux filtres'
+                    : 'Il n’y a pas de tickets'}
+              </p>
+              {!ticketsLoading && (
+                <p className="mt-1 max-w-md text-sm leading-6 text-neutral-500">
+                  {hasFilters
+                    ? 'Essayez avec d’autres filtres.'
+                    : 'Les tickets apparaîtront ici.'}
+                </p>
+              )}
+            </div>
           ) : (
             <div className="overflow-hidden rounded-lg border border-slate-200 bg-white shadow-sm">
               <div className="max-h-[70vh] min-h-[420px] overflow-auto">
@@ -566,6 +635,7 @@ export default function DashboardPage() {
             analysis={processAnalysis}
             buyerSort={buyerSort}
             validatorSort={validatorSort}
+            sortedBuyers={sortedBuyers}
             sortedValidators={sortedValidators}
             onBuyerSortChange={setBuyerSort}
             onValidatorSortChange={setValidatorSort}
@@ -595,10 +665,10 @@ function WorkflowKpiOverview({ kpis, progress }: { kpis: WorkflowKpi[]; progress
 
   return (
     <div className="space-y-4">
-      <div className={`overflow-hidden rounded-[28px] border bg-white px-5 py-5 shadow-[0_20px_45px_rgba(15,23,42,0.06)] sm:px-6 lg:px-7 ${progressTone.shell}`}>
+      <div className="px-5 py-5 sm:px-6 lg:px-7">
         <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
           <div className="max-w-2xl">
-            <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/80 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.22em] text-neutral-500 shadow-sm backdrop-blur">
+            <div className="inline-flex items-center gap-2 rounded-full border border-white/80 bg-white/80 px-3 py-1 text-[11px] font-bold uppercase tracking-[0.22em] text-neutral-500 shadow-sm backdrop-blur">
               <BarChart3 className={`size-3.5 ${progressTone.icon}`} />
               Progression des tickets
             </div>
@@ -608,20 +678,20 @@ function WorkflowKpiOverview({ kpis, progress }: { kpis: WorkflowKpi[]; progress
                 <span className={`mb-1 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${progressTone.badge}`}>{progress.suffix}</span>
               </div>
               <div className="mb-1">
-                <p className="text-sm font-medium text-neutral-500">{progress.detail}</p>
-                <p className="mt-1 text-xs uppercase tracking-[0.18em] text-neutral-400">Indicateur actif du filtre sélectionné</p>
+                <p className="text-lg font-bold text-neutral-800">{progress.detail}</p>
+                {/* <p className="mt-1 text-xs uppercase tracking-[0.18em] text-neutral-400">Indicateur actif du filtre sélectionné</p> */}
               </div>
             </div>
           </div>
 
-          <div className="w-full max-w-[280px] rounded-[24px] border border-white/70 bg-white/85 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)] backdrop-blur">
+          {/* <div className="w-full max-w-[280px] rounded-[24px] border border-white/70 bg-white/85 p-4 shadow-[0_16px_32px_rgba(15,23,42,0.05)] backdrop-blur">
             <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-neutral-400">Volume suivi</p>
             <div className="mt-2 flex items-end gap-2">
               <span className="text-3xl font-semibold tracking-[-0.05em] text-neutral-950">{progress.count}</span>
               <span className="pb-1 text-sm text-neutral-500">sur {progress.total}</span>
             </div>
             <p className="mt-1 text-xs leading-5 text-neutral-500">Lecture instantanée du ratio utilisé pour la progression affichée.</p>
-          </div>
+          </div> */}
         </div>
 
         <div className="mt-5">
@@ -646,8 +716,8 @@ function WorkflowKpiOverview({ kpis, progress }: { kpis: WorkflowKpi[]; progress
                 </div>
                 <span className="text-3xl font-semibold leading-none tracking-[-0.04em] text-neutral-950">{item.count}</span>
               </div>
-              <p className="mt-4 truncate text-[11px] font-semibold uppercase tracking-[0.18em] text-neutral-500">{item.label}</p>
-              <p className="mt-1 line-clamp-2 text-xs leading-5 text-neutral-500">{item.description}</p>
+              <p className="mt-4 line-clamp-2 text-base font-bold leading-5 text-neutral-800">{item.label}</p>
+              <p className="mt-1 line-clamp-2 text-[12px] font-medium leading-5 text-neutral-700">{item.description}</p>
             </div>
           )
         })}
@@ -659,25 +729,25 @@ function WorkflowKpiOverview({ kpis, progress }: { kpis: WorkflowKpi[]; progress
 function workflowProgressTone(progress: WorkflowProgressSummary) {
   if (progress.suffix.includes('rejet')) {
     return {
-      shell: 'border-red-100/80 bg-[linear-gradient(135deg,rgba(254,242,242,0.92),rgba(255,255,255,0.98))]',
-      bar: 'bg-gradient-to-r from-red-500 via-red-400 to-orange-300',
-      badge: 'bg-red-50 text-red-700',
-      icon: 'text-red-600',
+      shell: 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(252,231,243,0.28))]',
+      bar: 'bg-gradient-to-r from-rose-500 via-pink-500 to-rose-300',
+      badge: 'bg-rose-50 text-rose-700',
+      icon: 'text-rose-600',
     }
   }
   if (progress.suffix.includes('retard')) {
     return {
-      shell: 'border-amber-100/90 bg-[linear-gradient(135deg,rgba(255,251,235,0.96),rgba(255,255,255,0.98))]',
-      bar: 'bg-gradient-to-r from-amber-500 via-orange-400 to-amber-300',
+      shell: 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(254,249,195,0.3))]',
+      bar: 'bg-gradient-to-r from-amber-500 via-yellow-500 to-amber-300',
       badge: 'bg-amber-50 text-amber-700',
       icon: 'text-amber-600',
     }
   }
   return {
-    shell: 'border-emerald-100/80 bg-[linear-gradient(135deg,rgba(236,253,245,0.95),rgba(255,255,255,0.98))]',
-    bar: 'bg-gradient-to-r from-ades-green via-emerald-400 to-teal-300',
+    shell: 'border-slate-200 bg-[linear-gradient(180deg,rgba(255,255,255,0.99),rgba(220,252,231,0.28))]',
+    bar: 'bg-gradient-to-r from-emerald-500 via-green-400 to-teal-300',
     badge: 'bg-emerald-50 text-emerald-700',
-    icon: 'text-ades-green',
+    icon: 'text-emerald-600',
   }
 }
 
@@ -755,6 +825,7 @@ function ProcessEvaluationPanel({
   analysis,
   buyerSort,
   validatorSort,
+  sortedBuyers,
   sortedValidators,
   onBuyerSortChange,
   onValidatorSortChange,
@@ -762,6 +833,7 @@ function ProcessEvaluationPanel({
   analysis: ProcessAnalysis
   buyerSort: PerformanceSort
   validatorSort: PerformanceSort
+  sortedBuyers: ActorPerformance[]
   sortedValidators: ActorPerformance[]
   onBuyerSortChange: (value: PerformanceSort) => void
   onValidatorSortChange: (value: PerformanceSort) => void
@@ -771,22 +843,22 @@ function ProcessEvaluationPanel({
   const health = getProcessHealth(analysis, stageInsights, buyerInsights)
 
   return (
-    <div className="space-y-4">
-      <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="space-y-5">
+      <div className="rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.92))] p-5 shadow-[0_20px_45px_rgba(15,23,42,0.06)]">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="flex items-center gap-2">
               <BarChart3 className="size-4 text-ades-green" />
-              <h2 className="text-base font-semibold text-neutral-900">Santé du processus</h2>
+              <h2 className="text-xl font-semibold tracking-[-0.04em] text-neutral-900 sm:text-2xl">Santé du processus</h2>
             </div>
-            <p className="mt-1 text-sm text-neutral-500">Lecture consolidée des délais, goulots d'étranglement et performances achat.</p>
+            <p className="mt-1 text-sm leading-6 text-neutral-500">Lecture consolidée des délais, goulots d'étranglement et performances achat.</p>
           </div>
-          <span className={`inline-flex w-fit items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold ${health.tone}`}>
+          <span className={`inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm ${health.tone}`}>
             <Target className="size-3.5" />
             {health.status}
           </span>
         </div>
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
+        <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {health.cards.map((card) => (
             <ProcessHealthCard key={card.label} {...card} />
           ))}
@@ -794,15 +866,15 @@ function ProcessEvaluationPanel({
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[1.45fr_0.85fr]">
-        <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="rounded-[26px] border border-slate-200/80 bg-white/95 p-5 shadow-[0_16px_36px_rgba(15,23,42,0.05)]">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
             <div>
-              <h3 className="text-sm font-semibold text-neutral-900">Analyse détaillée par étape</h3>
-              <p className="mt-1 text-xs text-neutral-500">Poids de chaque jalon dans le cycle global et dispersion des délais observés.</p>
+              <h3 className="text-lg font-semibold tracking-[-0.03em] text-neutral-1000 sm:text-xl">Analyse détaillée par étape</h3>
+              {/* <p className="mt-1 text-xs leading-5 text-neutral-500">Poids de chaque jalon dans le cycle global et dispersion des délais observés.</p> */}
             </div>
-            <span className="rounded-lg bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-600">{analysis.stages.reduce((sum, stage) => sum + stage.count, 0)} mesures</span>
+            {/* <span className="rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-600">{analysis.stages.reduce((sum, stage) => sum + stage.count, 0)} mesures</span> */}
           </div>
-          <div className="mt-4 space-y-3">
+          <div className="mt-5 space-y-3">
             {analysis.stages.length === 0 ? (
               <EmptyInsight label="Aucune étape mesurable pour la période." />
             ) : (
@@ -817,8 +889,8 @@ function ProcessEvaluationPanel({
       <div className="grid gap-4 xl:grid-cols-2">
         <ActorRankingCard
           title="Classement des acheteurs"
-          description="Score calculé avec rapidité, volume traité et respect des délais."
-          sortedActors={buyerInsights.ranked}
+          description="Classement dynamique selon le critère sélectionné."
+          sortedActors={sortedBuyers}
           sort={buyerSort}
           onSortChange={onBuyerSortChange}
           emptyLabel="Aucun acheteur assigné pour le moment."
@@ -829,21 +901,21 @@ function ProcessEvaluationPanel({
       <div className="grid gap-4 xl:grid-cols-2">
         <ActorRankingCard
           title="Performance des validateurs"
-          description="Temps moyen de validation et validations réalisées dans les délais."
+          description="Classement dynamique selon le critère sélectionné."
           sortedActors={sortedValidators}
           sort={validatorSort}
           onSortChange={onValidatorSortChange}
           emptyLabel="Aucun validateur identifié dans les tickets."
         />
-        <div className="rounded-lg border border-red-100 bg-white p-4 shadow-sm">
+        <div className="rounded-[26px] border border-red-100/80 bg-white/95 p-5 shadow-[0_16px_36px_rgba(15,23,42,0.05)]">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h3 className="text-sm font-semibold text-neutral-900">Retards et blocages actifs</h3>
-              <p className="mt-1 text-xs text-neutral-500">Tickets qui nécessitent une action prioritaire.</p>
+              <h3 className="text-lg font-semibold tracking-[-0.03em] text-neutral-900 sm:text-xl">Retards et blocages actifs</h3>
+              {/* <p className="mt-1 text-xs leading-5 text-neutral-500">Tickets qui nécessitent une action prioritaire.</p> */}
             </div>
-            <span className="rounded-lg bg-white px-2.5 py-1 text-sm font-semibold text-red-700">{analysis.blockers.length}</span>
+            {/* <span className="rounded-full bg-red-50 px-3 py-1 text-sm font-semibold text-red-700">{analysis.blockers.length}</span> */}
           </div>
-          <div className="mt-4 space-y-2">
+          <div className="mt-5 space-y-2.5">
             {analysis.blockers.length === 0 ? (
               <EmptyInsight label="Aucun blocage détecté sur les tickets visibles." />
             ) : (
@@ -869,21 +941,21 @@ function StagePerformanceDetailRow({ stage }: { stage: StageMetric }) {
   }
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-3 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:shadow-md">
+    <div className="rounded-[22px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.88))] p-4 shadow-[0_12px_28px_rgba(15,23,42,0.04)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_34px_rgba(15,23,42,0.07)]">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="text-sm font-semibold text-neutral-900">{stage.label}</span>
+            <span className="text-sm font-semibold tracking-[-0.02em] text-neutral-900">{stage.label}</span>
             <span className={`rounded-md px-2 py-0.5 text-[11px] font-semibold ${performance.className}`}>{performance.label}</span>
           </div>
-          <p className="mt-1 text-xs text-neutral-500">
-            {stage.count} dossier{stage.count > 1 ? 's' : ''} traité{stage.count > 1 ? 's' : ''} · min {formatDays(stage.minDays)} · max {formatDays(stage.maxDays)}
+          <p className="mt-1 text-xs leading-5 text-neutral-500">
+            {stage.count} dossier{stage.count > 1 ? 's' : ''} · min {formatDays(stage.minDays)} · max {formatDays(stage.maxDays)}
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-2 text-right">
+        <div className="ml-auto grid w-full max-w-[120px] grid-cols-1 gap-2 text-right">
           <MetricPill label="Moyenne" value={formatDays(stage.averageDays)} />
-          <MetricPill label="Poids" value={`${stage.share}%`} />
-          <MetricPill label="Volume" value={String(stage.count)} />
+          {/* <MetricPill label="Poids" value={`${stage.share}%`} />
+          <MetricPill label="Volume" value={String(stage.count)} /> */}
         </div>
       </div>
       <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-slate-100" title={`${stage.share}% du cycle moyen mesuré`}>
@@ -895,53 +967,53 @@ function StagePerformanceDetailRow({ stage }: { stage: StageMetric }) {
 
 function MetricPill({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-lg border border-slate-100 bg-slate-50/70 px-2.5 py-1">
-      <p className="text-[10px] font-medium uppercase text-neutral-400">{label}</p>
-      <p className="text-xs font-semibold text-neutral-900">{value}</p>
+    <div className="rounded-2xl border border-slate-200/70 bg-white/88 px-3 py-2 shadow-sm">
+      <p className="text-[10px] font-medium uppercase tracking-[0.16em] text-neutral-400">{label}</p>
+      <p className="mt-1 text-xs font-semibold text-neutral-900">{value}</p>
     </div>
   )
 }
 
 function ProcessHealthCard({ label, value, hint, tone }: { label: string; value: string; hint: string; tone: 'green' | 'blue' | 'amber' | 'red' | 'slate' }) {
   const tones = {
-    green: 'border-ades-green/20 bg-ades-green/5 text-ades-green',
-    blue: 'border-blue-200 bg-blue-50 text-blue-700',
-    amber: 'border-amber-200 bg-amber-50 text-amber-700',
-    red: 'border-red-200 bg-red-50 text-red-700',
-    slate: 'border-slate-200 bg-slate-50 text-slate-700',
+    green: 'border-emerald-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(236,253,245,0.9))] text-emerald-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
+    blue: 'border-blue-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(239,246,255,0.9))] text-blue-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
+    amber: 'border-amber-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,251,235,0.88))] text-amber-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
+    red: 'border-rose-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,241,242,0.9))] text-rose-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
+    slate: 'border-slate-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.92))] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
   }
 
   return (
-    <div className={`rounded-lg border px-3 py-3 shadow-sm ${tones[tone]}`}>
-      <p className="text-[11px] font-medium uppercase text-neutral-500">{label}</p>
-      <p className="mt-2 truncate text-lg font-semibold" title={value}>{value}</p>
-      <p className="mt-1 line-clamp-2 text-xs leading-5 text-neutral-600">{hint}</p>
+    <div className={`rounded-[24px] border px-4 py-4 shadow-[0_14px_30px_rgba(15,23,42,0.04)] transition duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_34px_rgba(15,23,42,0.07)] ${tones[tone]}`}>
+      <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-neutral-800">{label}</p>
+      <p className="mt-3 truncate text-lg font-semibold tracking-[-0.03em] text-neutral-950" title={value}>{value}</p>
+      <p className="mt-1 line-clamp-2 text-xs font-semibold leading-5 text-neutral-700">{hint}</p>
     </div>
   )
 }
 
 function CriticalStagesCard({ stages, blockers, globalAverage }: { stages: StageMetric[]; blockers: BlockedTicket[]; globalAverage: number | null }) {
   return (
-    <div className="rounded-lg border border-red-100 bg-white p-4 shadow-sm">
+    <div className="rounded-[26px] border border-red-100/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(254,242,242,0.42))] p-5 shadow-[0_16px_36px_rgba(15,23,42,0.05)]">
       <div className="flex items-center justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <AlertTriangle className="size-4 text-red-600" />
-            <h3 className="text-sm font-semibold text-neutral-900">Étapes critiques</h3>
+            <h3 className="text-lg font-semibold tracking-[-0.03em] text-neutral-900 sm:text-xl">Étapes critiques</h3>
           </div>
-          <p className="mt-1 text-xs text-neutral-500">Top 3 des jalons les plus lents et dépassements de la moyenne globale.</p>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">Top 3 des étapes les plus lents et dépassements de la moyenne globale.</p>
         </div>
-        <span className="rounded-lg bg-white px-2.5 py-1 text-xs font-semibold text-red-700">{blockers.length} retard{blockers.length > 1 ? 's' : ''}</span>
+        {/* <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">{blockers.length} retard{blockers.length > 1 ? 's' : ''}</span> */}
       </div>
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-5 space-y-2.5">
         {stages.length === 0 ? (
           <EmptyInsight label="Aucune étape critique mesurable." />
         ) : (
           stages.map((stage, index) => {
             const overAverage = globalAverage !== null && stage.averageDays !== null && stage.averageDays > globalAverage
             return (
-              <div key={stage.key} className="rounded-lg border border-red-100 bg-red-50/20 p-3">
+              <div key={stage.key} className="rounded-[22px] border border-red-100/80 bg-white/88 p-4 shadow-sm">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-semibold text-neutral-900">{index + 1}. {stage.label}</p>
@@ -969,22 +1041,22 @@ function BuyerComparisonCard({ buyers }: { buyers: ActorPerformance[] }) {
   const visible = buyers.slice(0, 6)
 
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-[26px] border border-slate-200/80 bg-white/95 p-5 shadow-[0_16px_36px_rgba(15,23,42,0.05)]">
       <div>
-        <h3 className="text-sm font-semibold text-neutral-900">Comparaison des acheteurs</h3>
-        <p className="mt-1 text-xs text-neutral-500">Volume, temps moyen et taux de retard pour détecter charge, performance et besoin d'accompagnement.</p>
+        <h3 className="text-lg font-semibold tracking-[-0.03em] text-neutral-900 sm:text-xl">Comparaison des acheteurs</h3>
+        {/* <p className="mt-1 text-xs leading-5 text-neutral-500">Volume, temps moyen et taux de retard pour détecter charge, performance et besoin d'accompagnement.</p> */}
       </div>
-      <div className="mt-4 space-y-3">
+      <div className="mt-5 space-y-3">
         {visible.length === 0 ? (
           <EmptyInsight label="Aucune donnée acheteur comparable." />
         ) : (
           visible.map((buyer) => {
             const delayRate = buyer.total === 0 ? 0 : Math.round((buyer.lateCount / buyer.total) * 100)
             return (
-              <div key={buyer.name} className="rounded-lg border border-slate-100 bg-slate-50/70 p-3 transition duration-200 hover:bg-white hover:shadow-sm">
+              <div key={buyer.name} className="rounded-[22px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.88))] p-4 transition duration-200 hover:bg-white hover:shadow-[0_16px_32px_rgba(15,23,42,0.06)]">
                 <div className="flex items-center justify-between gap-3">
                   <p className="truncate text-sm font-semibold text-neutral-900">{buyer.name}</p>
-                  <span className="rounded-lg bg-white px-2 py-0.5 text-xs font-semibold text-ades-green">{buyer.score}/100</span>
+                  <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-ades-green shadow-sm">{buyer.score}/100</span>
                 </div>
                 <ComparisonBar label="Volume" value={buyer.total} max={maxVolume} color="bg-blue-500" suffix=" dossiers" />
                 <ComparisonBar label="Temps moyen" value={buyer.averageDays ?? 0} max={maxAverage} color="bg-amber-500" suffix=" j" />
@@ -1002,9 +1074,9 @@ function ComparisonBar({ label, value, max, color, suffix }: { label: string; va
   const width = value === 0 ? 0 : Math.max(6, Math.round((value / max) * 100))
 
   return (
-    <div className="mt-2 grid grid-cols-[92px_1fr_64px] items-center gap-2">
+    <div className="mt-3 grid grid-cols-[92px_1fr_64px] items-center gap-2.5">
       <span className="text-xs text-neutral-500">{label}</span>
-      <div className="h-2 overflow-hidden rounded-full bg-white">
+      <div className="h-2.5 overflow-hidden rounded-full bg-white shadow-inner ring-1 ring-slate-100">
         <div className={`h-full rounded-full ${color}`} style={{ width: `${width}%` }} />
       </div>
       <span className="text-right text-xs font-semibold text-neutral-700">{value}{suffix}</span>
@@ -1013,7 +1085,7 @@ function ComparisonBar({ label, value, max, color, suffix }: { label: string; va
 }
 
 function EmptyInsight({ label }: { label: string }) {
-  return <p className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-neutral-500">{label}</p>
+  return <p className="rounded-[22px] border border-slate-200/80 bg-white/92 p-4 text-sm text-neutral-500 shadow-sm">{label}</p>
 }
 
 function ActorRankingCard({
@@ -1032,28 +1104,27 @@ function ActorRankingCard({
   emptyLabel: string
 }) {
   return (
-    <div className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+    <div className="rounded-[26px] border border-slate-200/80 bg-white/95 p-5 shadow-[0_16px_36px_rgba(15,23,42,0.05)]">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h3 className="text-sm font-semibold text-neutral-900">{title}</h3>
-          <p className="mt-1 text-xs text-neutral-500">{description}</p>
+          <h3 className="text-lg font-semibold tracking-[-0.03em] text-neutral-900 sm:text-xl">{title}</h3>
+          <p className="mt-1 text-xs leading-5 text-neutral-500">{description}</p>
         </div>
         <Select value={sort} onValueChange={(value) => onSortChange(value as PerformanceSort)}>
-          <SelectTrigger className="h-8 w-full bg-white text-xs sm:w-[160px]">
+          <SelectTrigger className="h-8 w-full rounded-xl border-slate-200 bg-white text-xs shadow-sm sm:w-[160px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="count">Nombre traité</SelectItem>
             <SelectItem value="score">Meilleur score</SelectItem>
-            <SelectItem value="avg">Plus rapide</SelectItem>
-            <SelectItem value="count">Plus actif</SelectItem>
-            <SelectItem value="sla">Meilleur délai</SelectItem>
+            <SelectItem value="avg">Meilleur délai</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      <div className="mt-4 space-y-2">
+      <div className="mt-5 space-y-2.5">
         {sortedActors.length === 0 ? (
-          <p className="rounded-lg border border-slate-200 bg-slate-50 p-4 text-sm text-neutral-500">{emptyLabel}</p>
+          <p className="rounded-[22px] border border-slate-200 bg-slate-50/90 p-4 text-sm text-neutral-500">{emptyLabel}</p>
         ) : (
           sortedActors.slice(0, 6).map((actor, index) => <ActorPerformanceRow key={actor.name} actor={actor} rank={index + 1} />)
         )}
@@ -1067,18 +1138,18 @@ function ActorPerformanceRow({ actor, rank }: { actor: ActorPerformance; rank: n
   const rankClass = rank === 1 ? 'bg-amber-50 text-amber-700' : rank === 2 ? 'bg-slate-100 text-slate-700' : rank === 3 ? 'bg-orange-50 text-orange-700' : 'bg-white text-neutral-500'
 
   return (
-    <div className="rounded-lg border border-slate-100 bg-slate-50/70 p-3 transition duration-200 hover:bg-white hover:shadow-sm">
+    <div className="rounded-[22px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.88))] p-4 transition duration-200 hover:bg-white hover:shadow-[0_16px_32px_rgba(15,23,42,0.06)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-neutral-900">
             {rank}. {actor.name}
           </p>
           <p className="mt-1 text-xs text-neutral-500">
-            {actor.total} demande{actor.total > 1 ? 's' : ''} · {formatDays(actor.totalDays)} traité · {actor.lateCount} retard{actor.lateCount > 1 ? 's' : ''}
+            {actor.total} demande{actor.total > 1 ? 's' : ''} · {actor.lateCount} retard{actor.lateCount > 1 ? 's' : ''}
           </p>
         </div>
         <div className="shrink-0 text-right">
-          <span className={`inline-flex rounded-lg px-2.5 py-1 text-xs font-semibold ${rankClass}`}>{rankLabel}</span>
+          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${rankClass}`}>{rankLabel}</span>
           <p className="mt-1 text-xs font-semibold text-ades-green">{actor.score}/100</p>
         </div>
       </div>
@@ -1087,7 +1158,7 @@ function ActorPerformanceRow({ actor, rank }: { actor: ActorPerformance; rank: n
         <MetricPill label="SLA" value={`${actor.slaRate}%`} />
         <MetricPill label="Terminés" value={String(actor.completed)} />
       </div>
-      <div className="mt-2 h-2 overflow-hidden rounded-full bg-white" title="Score de performance">
+      <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white shadow-inner ring-1 ring-slate-100" title="Score de performance">
         <div className="h-full rounded-full bg-ades-green" style={{ width: `${actor.score}%` }} />
       </div>
     </div>
@@ -1098,13 +1169,13 @@ function BlockedTicketRow({ ticket }: { ticket: BlockedTicket }) {
   const tone = ticket.tone === 'red' ? 'text-red-700 bg-red-50' : ticket.tone === 'amber' ? 'text-amber-700 bg-amber-50' : 'text-slate-700 bg-slate-100'
 
   return (
-    <div className="rounded-lg border border-red-100 bg-white p-3 transition duration-200 hover:shadow-sm">
+    <div className="rounded-[22px] border border-red-100/80 bg-white/95 p-4 transition duration-200 hover:shadow-[0_16px_32px_rgba(15,23,42,0.06)]">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="truncate text-sm font-semibold text-neutral-900">#{ticket.id} · {ticket.name}</p>
           <p className="mt-1 text-xs text-neutral-500">{ticket.owner}</p>
         </div>
-        <span className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold ${tone}`}>{ticket.ageDays} j</span>
+        <span className={`shrink-0 rounded-full px-2.5 py-1 text-xs font-semibold ${tone}`}>{ticket.ageDays} j</span>
       </div>
       <p className="mt-2 text-xs font-medium text-red-700">{ticket.reason}</p>
     </div>
@@ -1195,7 +1266,7 @@ function TicketProgressDialog({
           </div>
         </DialogHeader>
 
-        {workflowError && <p className="text-xs text-amber-700">Workflow indisponible ({workflowError}). Les informations du ticket restent affichées.</p>}
+        {workflowError && <p className="text-xs text-amber-700">Le suivi du ticket n’est pas disponible pour le moment.</p>}
 
         <div className="overflow-x-auto pt-3 pb-2">
           <div className="rounded-[34px] bg-[radial-gradient(circle_at_top,rgba(76,139,64,0.08),transparent_30%),linear-gradient(180deg,rgba(255,255,255,0.72),rgba(248,250,252,0.82))] px-2 py-6 sm:px-4 sm:py-9">
@@ -1343,15 +1414,15 @@ function isMissingActorValue(value: string) {
 
 function MetricCard({ label, value, detail, accent, loading = false }: { label: string; value: string; detail?: string; accent: 'slate' | 'green' | 'sky' | 'amber'; loading?: boolean }) {
   const styles = {
-    slate: 'border-slate-200/70 bg-white/92 text-slate-500',
-    green: 'border-emerald-200/70 bg-emerald-50/72 text-emerald-700',
-    sky: 'border-sky-200/70 bg-sky-50/72 text-sky-700',
-    amber: 'border-amber-200/70 bg-amber-50/72 text-amber-700',
+    slate: 'border-slate-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.92))] text-slate-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
+    green: 'border-emerald-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(236,253,245,0.9))] text-emerald-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
+    sky: 'border-blue-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(239,246,255,0.9))] text-blue-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
+    amber: 'border-amber-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,251,235,0.88))] text-amber-700 shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
   }
 
   return (
-    <div className={`group rounded-[24px] border px-5 py-4 text-center shadow-[0_10px_30px_rgba(15,23,42,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_40px_rgba(15,23,42,0.07)] ${styles[accent]}`}>
-      <p className="text-[11px] font-medium uppercase tracking-[0.22em]">{label}</p>
+    <div className={`group rounded-[24px] border px-5 py-4 text-center shadow-[0_14px_30px_rgba(15,23,42,0.04)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_18px_40px_rgba(15,23,42,0.07)] ${styles[accent]}`}>
+      <p className="text-[11px] font-bold uppercase tracking-[0.22em] text-neutral-800">{label}</p>
       {loading ? (
         <>
           <Skeleton className="mx-auto mt-2 h-6 w-24" />
@@ -1360,7 +1431,7 @@ function MetricCard({ label, value, detail, accent, loading = false }: { label: 
       ) : (
         <>
           <p className="mt-2 text-base font-semibold leading-6 text-slate-950">{value}</p>
-          {detail && <p className="mt-1 text-sm text-slate-500">{detail}</p>}
+          {detail && <p className="mt-1 text-sm font-semibold text-neutral-700">{detail}</p>}
         </>
       )}
     </div>
@@ -1381,13 +1452,14 @@ function StatusBadge({ ticket, status: statusOverride }: { ticket: DashboardTick
 }
 
 function getTicketBusinessStatus(ticket: DashboardTicket, workflow: WorkflowData | null = null): TicketBusinessStatus {
+  const workflowSource = workflow ?? (workflowStepRecords(ticket.raw).length > 0 ? ticket.raw : null)
   return resolveTicketBusinessStatus({
     ...ticket.raw,
     status: ticket.statutCode,
     status_label: ticket.statut,
     acheteur: ticket.acheteur,
     date_resolution: ticket.dateResolutionRaw,
-  }, workflow)
+  }, workflowSource)
 }
 
 function getResolvedTicketStatus(ticket: DashboardTicket, workflowStatuses: Record<string, TicketBusinessStatus>) {
@@ -1421,6 +1493,23 @@ function mapDashboardTicket(ticket: Record<string, unknown>): DashboardTicket {
     dateResolutionRaw: ticket.date_resolution ?? ticket.dateResolution ?? ticket.closedate ?? ticket.solvedate,
     isLate: calculateDelayStatus(ticket).isLate,
     raw: ticket,
+  }
+}
+
+function enrichTicketWithWorkflow(ticket: DashboardTicket, workflow: WorkflowData | null): DashboardTicket {
+  if (!workflow) return ticket
+  const flattened = flattenWorkflow(workflow)
+  const workflowAssignedBuyer = workflowBuyer(workflow)
+
+  return {
+    ...ticket,
+    acheteur: workflowAssignedBuyer || ticket.acheteur,
+    raw: {
+      ...ticket.raw,
+      ...workflow,
+      ...flattened,
+      [WORKFLOW_SOURCE_FLAG]: true,
+    },
   }
 }
 
@@ -1655,23 +1744,23 @@ function getWorkflowKpiKey(ticket: DashboardTicket): WorkflowKpi['key'] {
 function workflowKpiTone(tone: WorkflowKpi['tone']) {
   const tones = {
     amber: {
-      card: 'border-amber-100 bg-amber-50/40',
+      card: 'border-amber-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,251,235,0.88))] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
       icon: 'text-amber-700',
     },
     blue: {
-      card: 'border-blue-100 bg-blue-50/40',
+      card: 'border-blue-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(239,246,255,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
       icon: 'text-blue-700',
     },
     green: {
-      card: 'border-ades-green/10 bg-ades-green/5',
-      icon: 'text-ades-green',
+      card: 'border-emerald-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(236,253,245,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
+      icon: 'text-emerald-700',
     },
     red: {
-      card: 'border-red-100 bg-red-50/40',
-      icon: 'text-red-700',
+      card: 'border-rose-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(255,241,242,0.9))] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
+      icon: 'text-rose-700',
     },
     slate: {
-      card: 'border-slate-200 bg-slate-50',
+      card: 'border-slate-200/90 bg-[linear-gradient(180deg,rgba(255,255,255,0.96),rgba(248,250,252,0.92))] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)]',
       icon: 'text-slate-700',
     },
   }
@@ -1694,6 +1783,7 @@ function getWorkflowStageKey(ticket: DashboardTicket) {
 }
 
 function buildProcessAnalysis(tickets: DashboardTicket[]): ProcessAnalysis {
+  const blockers = buildBlockedTickets(tickets)
   const stages: StageMetric[] = [
     buildStageMetric('validation', 'Création → Validation', tickets, 'creation', 'validation'),
     buildStageMetric('assignment', 'Validation → Assignation', tickets, 'validation', 'assignation'),
@@ -1748,7 +1838,12 @@ function buildProcessAnalysis(tickets: DashboardTicket[]): ProcessAnalysis {
     stages: weightedStages,
     buyers: buildBuyerPerformance(tickets),
     validators: buildValidatorPerformance(tickets),
-    blockers: buildBlockedTickets(tickets),
+    blockers,
+    summary: {
+      totalTickets: tickets.length,
+      lateTickets: tickets.filter((ticket) => ticket.isLate).length,
+      blockedTickets: blockers.length,
+    },
   }
 }
 
@@ -1808,13 +1903,25 @@ function buildValidatorPerformance(tickets: DashboardTicket[]): ActorPerformance
   })
 
   return Array.from(groups.entries()).map(([name, items]) => {
-    const validated = items.filter((ticket) => getTicketDate(ticket, 'validation') !== null || ticket.statutCode >= 2).length
-    const pending = items.filter((ticket) => ticket.statutCode <= 1).length
-    const durations = items.map((ticket) => diffDays(getTicketDate(ticket, 'creation'), getTicketDate(ticket, 'validation')))
+    const validations = items.map((ticket) => {
+      const validationDate = getTicketDate(ticket, 'validation')
+      return {
+        ticket,
+        validationDate,
+        duration: diffDays(getTicketDate(ticket, 'creation'), validationDate),
+      }
+    })
+    const measuredValidations = validations.filter(
+      (item): item is { ticket: DashboardTicket; validationDate: Date; duration: number } =>
+        item.validationDate !== null && item.duration !== null,
+    )
+    const validated = validations.filter((item) => item.validationDate !== null).length
+    const pending = validations.length - validated
+    const durations = validations.map((item) => item.duration)
     const averageDays = averageNumbers(durations)
-    const onTime = durations.filter((duration) => duration !== null && duration <= 2).length
+    const onTime = measuredValidations.filter((item) => item.duration <= 2).length
     const totalDays = durations.reduce<number>((sum, duration) => sum + (duration ?? 0), 0)
-    const slaRate = Math.round((onTime / Math.max(1, validated)) * 100)
+    const slaRate = measuredValidations.length === 0 ? 0 : Math.round((onTime / measuredValidations.length) * 100)
     return {
       name,
       total: items.length,
@@ -1823,7 +1930,7 @@ function buildValidatorPerformance(tickets: DashboardTicket[]): ActorPerformance
       completed: validated,
       inProgress: pending,
       slaRate,
-      lateCount: Math.max(0, validated - onTime),
+      lateCount: Math.max(0, measuredValidations.length - onTime),
       score: calculateActorScore(items.length, averageDays, slaRate),
     }
   })
@@ -1866,7 +1973,6 @@ function sortActorPerformance(items: ActorPerformance[], sort: PerformanceSort) 
   return [...items].sort((a, b) => {
     if (sort === 'score') return b.score - a.score
     if (sort === 'count') return b.total - a.total
-    if (sort === 'sla') return b.slaRate - a.slaRate
     return (a.averageDays ?? Number.POSITIVE_INFINITY) - (b.averageDays ?? Number.POSITIVE_INFINITY)
   })
 }
@@ -1905,9 +2011,12 @@ function getProcessHealth(
   const cycle = analysis.global.find((metric) => metric.key === 'cycle')?.value ?? null
   const slowestStage = [...analysis.stages].filter((stage) => stage.averageDays !== null).sort((a, b) => (b.averageDays ?? 0) - (a.averageDays ?? 0))[0] ?? null
   const bestStage = [...analysis.stages].filter((stage) => stage.averageDays !== null).sort((a, b) => (a.averageDays ?? 0) - (b.averageDays ?? 0))[0] ?? null
-  const buyerTotal = analysis.buyers.reduce((sum, buyer) => sum + buyer.total, 0)
-  const lateTotal = analysis.buyers.reduce((sum, buyer) => sum + buyer.lateCount, 0)
-  const lateRate = buyerTotal === 0 ? 0 : Math.round((lateTotal / buyerTotal) * 100)
+  const lateTotal = analysis.summary.lateTickets
+  const lateRate = analysis.summary.totalTickets === 0 ? 0 : Math.round((lateTotal / analysis.summary.totalTickets) * 100)
+  const cycleTone = cycle === null ? 'slate' as const : cycle > 10 ? 'red' as const : cycle > 5 ? 'amber' as const : 'blue' as const
+  const slowStageTone = slowestStage === null ? 'slate' as const : slowestStage.tone === 'red' ? 'red' as const : 'amber' as const
+  const bestStageTone = bestStage === null ? 'slate' as const : 'green' as const
+  const slowBuyerTone = buyerInsights.slowest === null ? 'slate' as const : (buyerInsights.slowest.averageDays ?? 0) > 10 ? 'red' as const : 'amber' as const
   const status = lateRate >= 25 || stageInsights.criticalStages.some((stage) => stage.tone === 'red') ? 'Sous tension' : lateRate >= 10 ? 'A surveiller' : 'Maitrise'
   const tone = status === 'Sous tension' ? 'bg-red-50 text-red-700' : status === 'A surveiller' ? 'bg-amber-50 text-amber-700' : 'bg-ades-green/10 text-ades-green'
 
@@ -1915,12 +2024,12 @@ function getProcessHealth(
     status,
     tone,
     cards: [
-      { label: 'Durée moyenne', value: formatDays(cycle), hint: 'Cycle complet mesuré', tone: metricTone(cycle) },
-      { label: 'Étape lente', value: slowestStage?.label ?? '-', hint: slowestStage ? formatDays(slowestStage.averageDays) : 'Aucune mesure', tone: slowestStage?.tone ?? 'slate' },
-      { label: 'Étape performante', value: bestStage?.label ?? '-', hint: bestStage ? formatDays(bestStage.averageDays) : 'Aucune mesure', tone: bestStage?.tone ?? 'slate' },
+      { label: 'Durée moyenne', value: formatDays(cycle), hint: 'Cycle complet mesuré', tone: cycleTone },
+      { label: 'Étape lente', value: slowestStage?.label ?? '-', hint: slowestStage ? formatDays(slowestStage.averageDays) : 'Aucune mesure', tone: slowStageTone },
+      { label: 'Étape performante', value: bestStage?.label ?? '-', hint: bestStage ? formatDays(bestStage.averageDays) : 'Aucune mesure', tone: bestStageTone },
       { label: 'Top acheteur', value: buyerInsights.best?.name ?? '-', hint: buyerInsights.best ? `${buyerInsights.best.score}/100 · ${buyerInsights.best.total} dossiers` : 'Aucun acheteur', tone: 'green' as const },
-      { label: 'Acheteur lent', value: buyerInsights.slowest?.name ?? '-', hint: buyerInsights.slowest ? formatDays(buyerInsights.slowest.averageDays) : 'Aucune mesure', tone: buyerInsights.slowest ? 'amber' as const : 'slate' as const },
-      { label: 'Taux retard', value: `${lateRate}%`, hint: `${lateTotal} retard${lateTotal > 1 ? 's' : ''} détecté${lateTotal > 1 ? 's' : ''}`, tone: lateRate >= 25 ? 'red' as const : lateRate >= 10 ? 'amber' as const : 'green' as const },
+      { label: 'Acheteur lent', value: buyerInsights.slowest?.name ?? '-', hint: buyerInsights.slowest ? formatDays(buyerInsights.slowest.averageDays) : 'Aucune mesure', tone: slowBuyerTone },
+      { label: 'Taux retard', value: `${lateRate}%`, hint: `${lateTotal} ticket${lateTotal > 1 ? 's' : ''} en retard`, tone: lateRate >= 25 ? 'red' as const : lateRate >= 10 ? 'amber' as const : 'green' as const },
     ],
   }
 }
@@ -1936,19 +2045,12 @@ function stagePerformanceLabel(stage: StageMetric) {
 function getTicketDate(ticket: DashboardTicket, step: string) {
   const raw = ticket.raw
   if (isRejectedTicket(ticket) && (step === 'achat' || step === 'cloture')) return null
-  if (hasWorkflowSource(raw)) return parseDateValue(workflowStepDateValue(raw, step))
-  const value =
-    step === 'creation'
-      ? ticket.dateCreationRaw
-      : step === 'validation'
-        ? firstValue(raw, ['date_validation', 'validatedAt', 'validationDate'])
-        : step === 'assignation'
-          ? firstValue(raw, ['date_assignation', 'assignedAt', 'datePriseEnCharge', 'takenInChargeAt'])
-          : step === 'achat'
-            ? firstValue(raw, ['purchase_date', 'date_achat', 'achatEffectueAt']) ?? ticket.dateResolutionRaw
-            : firstValue(raw, ['closedate', 'closedAt']) ?? ticket.dateResolutionRaw
+  if (hasWorkflowSource(raw)) {
+    const workflowDate = parseDateValue(workflowStepDateValue(raw, step))
+    if (workflowDate) return workflowDate
+  }
 
-  return parseDateValue(value)
+  return parseDateValue(fallbackTicketDateValue(ticket, step))
 }
 
 function diffDays(from: Date | null, to: Date | null) {
@@ -2027,9 +2129,22 @@ function workflowDurationMinutes(from: Date | null, to: Date | null) {
 }
 
 function workflowStepRecords(workflow: WorkflowData | null) {
-  const items = workflow ? firstValue(workflow, ['etapes']) : undefined
+  const items = workflow ? firstValue(workflow, ['etapes', 'steps', 'history', 'historique']) : undefined
   if (!Array.isArray(items)) return []
   return items.filter((item): item is WorkflowData => Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+}
+
+function fallbackTicketDateValue(ticket: DashboardTicket, step: string) {
+  const raw = ticket.raw
+  return step === 'creation'
+    ? ticket.dateCreationRaw
+    : step === 'validation'
+      ? firstValue(raw, ['date_validation', 'validatedAt', 'validationDate', 'validation_date'])
+      : step === 'assignation'
+        ? firstValue(raw, ['date_assignation', 'assignedAt', 'datePriseEnCharge', 'takenInChargeAt', 'attribution_date'])
+        : step === 'achat'
+          ? firstValue(raw, ['purchase_date', 'date_achat', 'achatEffectueAt', 'solution_date']) ?? ticket.dateResolutionRaw
+          : firstValue(raw, ['closedate', 'closedAt', 'resolution_date', 'date_cloture']) ?? ticket.dateResolutionRaw
 }
 
 function workflowTimelineKey(value: string) {
@@ -2076,11 +2191,11 @@ function isRejectedWorkflowValue(value: unknown) {
 }
 
 function timelineDefaultLabel(key: string) {
-  if (key === 'creation') return 'Demande créée'
-  if (key === 'validation') return 'Validé'
-  if (key === 'assignation') return 'Assigné à un acheteur'
-  if (key === 'achat') return 'En cours de traitement'
-  return 'Livré'
+  if (key === 'creation') return 'Création demande'
+  if (key === 'validation') return 'Validation'
+  if (key === 'assignation') return 'Assignation à un acheteur'
+  if (key === 'achat') return 'Traitement'
+  return 'Livraison'
 }
 
 function timelineRoleLabel(key: string) {
@@ -2093,7 +2208,10 @@ function timelineRoleLabel(key: string) {
 
 function timelineUserForStep(key: string, ticket: DashboardTicket) {
   const raw = ticket.raw
-  if (hasWorkflowSource(raw)) return actorName(workflowStepActorValue(raw, key))
+  if (hasWorkflowSource(raw)) {
+    const workflowActor = actorName(workflowStepActorValue(raw, key))
+    if (workflowActor) return workflowActor
+  }
   const fallbackRequester = stringValue(firstValue(raw, ['demandeur', 'requester', 'createdBy', 'auteur', 'creator', 'created_by', 'requester_name'])) || 'Demandeur'
   const fallbackBuyer = hasAssignedBuyer(ticket.acheteur) ? ticket.acheteur : 'Non assigné'
 
@@ -2264,7 +2382,7 @@ function flattenWorkflow(workflow: WorkflowData) {
     if (!step || typeof step !== 'object' || Array.isArray(step)) continue
     const item = step as WorkflowData
     flattened[`${prefix}_date`] = firstValue(item, ['date', 'at', 'created_at', 'completed_at'])
-    flattened[`${prefix}_actor`] = actorName(firstValue(item, ['actor', 'user', 'performed_by', 'auteur']))
+    flattened[`${prefix}_actor`] = actorName(firstValue(item, ['acteur', 'actor', 'user', 'performed_by', 'auteur']))
   }
   const steps = firstValue(workflow, ['steps', 'etapes', 'history', 'historique'])
   if (Array.isArray(steps)) {
@@ -2280,7 +2398,7 @@ function flattenWorkflow(workflow: WorkflowData) {
                 : ''
       if (!prefix) continue
       flattened[`${prefix}_date`] = firstValue(step, ['date', 'at', 'created_at', 'completed_at', 'date_etape'])
-      flattened[`${prefix}_actor`] = actorName(firstValue(step, ['actor', 'user', 'performed_by', 'auteur', 'utilisateur']))
+      flattened[`${prefix}_actor`] = actorName(firstValue(step, ['acteur', 'actor', 'user', 'performed_by', 'auteur', 'utilisateur']))
     }
   }
   flattened.demandeur = flattened.creation_actor ?? flattened.demandeur

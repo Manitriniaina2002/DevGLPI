@@ -1049,7 +1049,9 @@ function DashboardAcheteurContent() {
 
         <CardContent>
           {filtered.length === 0 ? (
-            <p className="py-8 text-center text-sm text-neutral-400">Aucun ticket correspondant aux filtres.</p>
+            <p className="py-8 text-center text-sm text-neutral-400">
+              {tickets.length === 0 ? 'Il n’y a pas de tickets.' : 'Aucun ticket ne correspond aux filtres.'}
+            </p>
           ) : (
             <div className="space-y-2">
               {filtered.map((ticket) => {
