@@ -15,7 +15,6 @@ import {
   Search,
   ShieldCheck,
   ShoppingCart,
-  Target,
   UserCheck,
 } from 'lucide-react'
 import { Button } from '@/app/components/ui/button'
@@ -35,6 +34,7 @@ import { isTicketRejected, resolveTicketBusinessStatus, type TicketBusinessStatu
 type QuickTicketFilter = 'all' | 'rejected' | 'late'
 type TimelineStepState = 'done' | 'current' | 'pending' | 'rejected'
 type PerformanceSort = 'score' | 'avg' | 'count'
+type ActorRankingSort = 'volume' | 'speed'
 const WORKFLOW_SOURCE_FLAG = '__workflow_source'
 const WORKFLOW_TIMELINE_LABELS = [
   { key: 'creation', label: 'Création de la demande' },
@@ -92,8 +92,10 @@ interface StageMetric {
 interface ActorPerformance {
   name: string
   total: number
+  processedCount: number
   totalDays: number
   averageDays: number | null
+  averageMinutes: number | null
   completed: number
   inProgress: number
   slaRate: number
@@ -172,8 +174,8 @@ export default function DashboardPage() {
   const [ticketPageSize, setTicketPageSize] = useState<(typeof ticketPageSizeOptions)[number]>(25)
   const [projectOptions, setProjectOptions] = useState<string[]>([])
   const [buyerOptions, setBuyerOptions] = useState<string[]>([])
-  const [buyerSort, setBuyerSort] = useState<PerformanceSort>('score')
-  const [validatorSort, setValidatorSort] = useState<PerformanceSort>('score')
+  const [buyerSort, setBuyerSort] = useState<ActorRankingSort>('speed')
+  const [validatorSort, setValidatorSort] = useState<ActorRankingSort>('speed')
   const { setHeaderActions } = useHeaderActions()
 
   const { summary, loading, error } = useDashboardSummary({
@@ -367,11 +369,11 @@ export default function DashboardPage() {
     return () => controller.abort()
   }, [selectedTicket])
   const sortedValidators = useMemo(
-    () => sortActorPerformance(processAnalysis.validators, validatorSort),
+    () => sortActorRanking(processAnalysis.validators, validatorSort),
     [processAnalysis.validators, validatorSort],
   )
   const sortedBuyers = useMemo(
-    () => sortActorPerformance(processAnalysis.buyers, buyerSort),
+    () => sortActorRanking(processAnalysis.buyers, buyerSort),
     [processAnalysis.buyers, buyerSort],
   )
   const hasFilters =
@@ -831,12 +833,12 @@ function ProcessEvaluationPanel({
   onValidatorSortChange,
 }: {
   analysis: ProcessAnalysis
-  buyerSort: PerformanceSort
-  validatorSort: PerformanceSort
+  buyerSort: ActorRankingSort
+  validatorSort: ActorRankingSort
   sortedBuyers: ActorPerformance[]
   sortedValidators: ActorPerformance[]
-  onBuyerSortChange: (value: PerformanceSort) => void
-  onValidatorSortChange: (value: PerformanceSort) => void
+  onBuyerSortChange: (value: ActorRankingSort) => void
+  onValidatorSortChange: (value: ActorRankingSort) => void
 }) {
   const stageInsights = getStageInsights(analysis)
   const buyerInsights = getBuyerInsights(analysis.buyers)
@@ -853,10 +855,6 @@ function ProcessEvaluationPanel({
             </div>
             <p className="mt-1 text-sm leading-6 text-neutral-500">Lecture consolidée des délais, goulots d'étranglement et performances achat.</p>
           </div>
-          <span className={`inline-flex w-fit items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold shadow-sm ${health.tone}`}>
-            <Target className="size-3.5" />
-            {health.status}
-          </span>
         </div>
         <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
           {health.cards.map((card) => (
@@ -889,7 +887,7 @@ function ProcessEvaluationPanel({
       <div className="grid gap-4 xl:grid-cols-2">
         <ActorRankingCard
           title="Classement des acheteurs"
-          description="Classement dynamique selon le critère sélectionné."
+          actorKind="buyer"
           sortedActors={sortedBuyers}
           sort={buyerSort}
           onSortChange={onBuyerSortChange}
@@ -901,7 +899,7 @@ function ProcessEvaluationPanel({
       <div className="grid gap-4 xl:grid-cols-2">
         <ActorRankingCard
           title="Performance des validateurs"
-          description="Classement dynamique selon le critère sélectionné."
+          actorKind="validator"
           sortedActors={sortedValidators}
           sort={validatorSort}
           onSortChange={onValidatorSortChange}
@@ -999,9 +997,9 @@ function CriticalStagesCard({ stages, blockers, globalAverage }: { stages: Stage
         <div>
           <div className="flex items-center gap-2">
             <AlertTriangle className="size-4 text-red-600" />
-            <h3 className="text-lg font-semibold tracking-[-0.03em] text-neutral-900 sm:text-xl">Étapes critiques</h3>
+            <h3 className="text-lg font-semibold tracking-[-0.03em] text-neutral-900 sm:text-xl">Étapes Lentes</h3>
           </div>
-          <p className="mt-1 text-xs leading-5 text-neutral-500">Top 3 des étapes les plus lents et dépassements de la moyenne globale.</p>
+          {/* <p className="mt-1 text-xs leading-5 text-neutral-500">Top 3 des étapes les plus lents et dépassements de la moyenne globale.</p> */}
         </div>
         {/* <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">{blockers.length} retard{blockers.length > 1 ? 's' : ''}</span> */}
       </div>
@@ -1058,9 +1056,9 @@ function BuyerComparisonCard({ buyers }: { buyers: ActorPerformance[] }) {
                   <p className="truncate text-sm font-semibold text-neutral-900">{buyer.name}</p>
                   <span className="rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-ades-green shadow-sm">{buyer.score}/100</span>
                 </div>
-                <ComparisonBar label="Volume" value={buyer.total} max={maxVolume} color="bg-blue-500" suffix=" dossiers" />
+                <ComparisonBar label="Volume" value={buyer.total} max={maxVolume} color="bg-blue-500" suffix=" tickets" />
                 <ComparisonBar label="Temps moyen" value={buyer.averageDays ?? 0} max={maxAverage} color="bg-amber-500" suffix=" j" />
-                <ComparisonBar label="Taux retard" value={delayRate} max={100} color={delayRate > 20 ? 'bg-red-500' : 'bg-ades-green'} suffix="%" />
+                {/* <ComparisonBar label="Taux retard" value={delayRate} max={100} color={delayRate > 20 ? 'bg-red-500' : 'bg-ades-green'} suffix="%" /> */}
               </div>
             )
           })
@@ -1090,76 +1088,108 @@ function EmptyInsight({ label }: { label: string }) {
 
 function ActorRankingCard({
   title,
-  description,
+  actorKind,
   sortedActors,
   sort,
   onSortChange,
   emptyLabel,
 }: {
   title: string
-  description: string
+  actorKind: 'buyer' | 'validator'
   sortedActors: ActorPerformance[]
-  sort: PerformanceSort
-  onSortChange: (value: PerformanceSort) => void
+  sort: ActorRankingSort
+  onSortChange: (value: ActorRankingSort) => void
   emptyLabel: string
 }) {
   return (
-    <div className="rounded-[26px] border border-slate-200/80 bg-white/95 p-5 shadow-[0_16px_36px_rgba(15,23,42,0.05)]">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div>
+    <div className="rounded-[26px] border border-slate-200/80 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.96))] p-5 shadow-[0_16px_36px_rgba(15,23,42,0.05)]">
+      <div className="flex flex-col gap-3 border-b border-slate-200/70 pb-4 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h3 className="text-lg font-semibold tracking-[-0.03em] text-neutral-900 sm:text-xl">{title}</h3>
-          <p className="mt-1 text-xs leading-5 text-neutral-500">{description}</p>
         </div>
-        <Select value={sort} onValueChange={(value) => onSortChange(value as PerformanceSort)}>
-          <SelectTrigger className="h-8 w-full rounded-xl border-slate-200 bg-white text-xs shadow-sm sm:w-[160px]">
+        <Select value={sort} onValueChange={(value) => onSortChange(value as ActorRankingSort)}>
+          <SelectTrigger className="h-9 w-full rounded-xl border-slate-200 bg-white/95 text-xs font-medium shadow-sm sm:w-[170px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="count">Nombre traité</SelectItem>
-            <SelectItem value="score">Meilleur score</SelectItem>
-            <SelectItem value="avg">Meilleur délai</SelectItem>
+            <SelectItem value="volume">Volume traité</SelectItem>
+            <SelectItem value="speed">Rapidité</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      <div className="mt-5 space-y-2.5">
+      <div className="mt-4 space-y-2.5">
         {sortedActors.length === 0 ? (
           <p className="rounded-[22px] border border-slate-200 bg-slate-50/90 p-4 text-sm text-neutral-500">{emptyLabel}</p>
         ) : (
-          sortedActors.slice(0, 6).map((actor, index) => <ActorPerformanceRow key={actor.name} actor={actor} rank={index + 1} />)
+          sortedActors.slice(0, 6).map((actor, index) => (
+            <ActorPerformanceRow
+              key={actor.name}
+              actor={actor}
+              actorKind={actorKind}
+              rank={index + 1}
+              sort={sort}
+            />
+          ))
         )}
       </div>
     </div>
   )
 }
 
-function ActorPerformanceRow({ actor, rank }: { actor: ActorPerformance; rank: number }) {
-  const rankLabel = rank === 1 ? 'Top Performer' : rank === 2 ? 'Second' : rank === 3 ? 'Troisième' : `Rang ${rank}`
-  const rankClass = rank === 1 ? 'bg-amber-50 text-amber-700' : rank === 2 ? 'bg-slate-100 text-slate-700' : rank === 3 ? 'bg-orange-50 text-orange-700' : 'bg-white text-neutral-500'
+function ActorPerformanceRow({
+  actor,
+  actorKind,
+  rank,
+  sort,
+}: {
+  actor: ActorPerformance
+  actorKind: 'buyer' | 'validator'
+  rank: number
+  sort: ActorRankingSort
+}) {
+  const rankLabel = rank === 1 ? 'Top 1' : rank === 2 ? 'Top 2' : rank === 3 ? 'Top 3' : `Top ${rank}`
+  const cardAccent = rank === 1
+    ? 'border-amber-200/90 shadow-[0_18px_34px_rgba(245,158,11,0.08)]'
+    : rank === 2
+      ? 'border-slate-300/90'
+      : rank === 3
+        ? 'border-orange-200/90'
+        : 'border-slate-200/70'
+  const volumeLabel = actorKind === 'buyer' ? 'tickets' : 'validations'
+  const volumeCardClass = sort === 'volume'
+    ? 'border-blue-200/90 bg-blue-50/80 shadow-[0_10px_22px_rgba(59,130,246,0.10)]'
+    : 'border-slate-200/80 bg-slate-50/85'
+  const speedCardClass = sort === 'speed'
+    ? 'border-emerald-200/90 bg-emerald-50/80 shadow-[0_10px_22px_rgba(16,185,129,0.10)]'
+    : 'border-slate-200/80 bg-slate-50/85'
+  const volumeTextClass = sort === 'volume' ? 'text-blue-700' : 'text-neutral-950'
+  const speedTextClass = sort === 'speed' ? 'text-emerald-700' : 'text-neutral-950'
+  const rankTextClass = rank === 1
+    ? 'border-amber-200 bg-amber-50 text-amber-700'
+    : rank === 2
+      ? 'border-slate-200 bg-slate-100 text-slate-700'
+      : rank === 3
+        ? 'border-orange-200 bg-orange-50 text-orange-700'
+        : 'border-slate-200 bg-white text-neutral-500'
 
   return (
-    <div className="rounded-[22px] border border-slate-200/70 bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.88))] p-4 transition duration-200 hover:bg-white hover:shadow-[0_16px_32px_rgba(15,23,42,0.06)]">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-neutral-900">
-            {rank}. {actor.name}
-          </p>
-          <p className="mt-1 text-xs text-neutral-500">
-            {actor.total} demande{actor.total > 1 ? 's' : ''} · {actor.lateCount} retard{actor.lateCount > 1 ? 's' : ''}
-          </p>
+    <div className={`relative rounded-[20px] border bg-[linear-gradient(180deg,rgba(255,255,255,0.98),rgba(248,250,252,0.90))] p-3.5 transition duration-200 hover:bg-white hover:shadow-[0_16px_32px_rgba(15,23,42,0.06)] ${cardAccent}`}>
+      <div className="flex items-center gap-3 pr-20">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[15px] font-semibold text-neutral-950">{actor.name}</p>
         </div>
-        <div className="shrink-0 text-right">
-          <span className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${rankClass}`}>{rankLabel}</span>
-          <p className="mt-1 text-xs font-semibold text-ades-green">{actor.score}/100</p>
+        <div className="flex shrink-0 gap-2.5">
+          <div className={`min-w-[88px] rounded-xl border px-2.5 py-2 ${volumeCardClass}`}>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-500">{volumeLabel}</p>
+            <p className={`mt-0.5 text-base font-semibold tracking-[-0.03em] ${volumeTextClass}`}>{actor.processedCount}</p>
+          </div>
+          <div className={`min-w-[108px] rounded-xl border px-2.5 py-2 ${speedCardClass}`}>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-neutral-500">Moyenne</p>
+            <p className={`mt-0.5 text-base font-semibold tracking-[-0.03em] ${speedTextClass}`}>{formatCompactDuration(actor.averageMinutes)}</p>
+          </div>
         </div>
-      </div>
-      <div className="mt-3 grid gap-2 sm:grid-cols-3">
-        <MetricPill label="Moyenne" value={formatDays(actor.averageDays)} />
-        <MetricPill label="SLA" value={`${actor.slaRate}%`} />
-        <MetricPill label="Terminés" value={String(actor.completed)} />
-      </div>
-      <div className="mt-3 h-2.5 overflow-hidden rounded-full bg-white shadow-inner ring-1 ring-slate-100" title="Score de performance">
-        <div className="h-full rounded-full bg-ades-green" style={{ width: `${actor.score}%` }} />
+        <span className={`absolute right-3 top-3 inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold shadow-sm ${rankTextClass}`}>{rankLabel}</span>
       </div>
     </div>
   )
@@ -1872,10 +1902,21 @@ function buildBuyerPerformance(tickets: DashboardTicket[]): ActorPerformance[] {
   return Array.from(groups.entries()).map(([name, items]) => {
     const completed = items.filter((ticket) => getTicketBusinessStatus(ticket) === 'Clos').length
     const inProgress = items.filter((ticket) => ['Assigné', 'En cours de traitement'].includes(getTicketBusinessStatus(ticket))).length
-    const durations = items.map((ticket) => diffDays(getTicketDate(ticket, 'assignation'), getTicketDate(ticket, 'achat') ?? getTicketDate(ticket, 'cloture')))
+    const processedTickets = items.map((ticket) => {
+      const processedAt = getTicketDate(ticket, 'achat') ?? getTicketDate(ticket, 'cloture')
+      return {
+        ticket,
+        processedAt,
+        duration: diffDays(getTicketDate(ticket, 'assignation'), processedAt),
+      }
+    })
+    const durations = processedTickets.map((item) => item.duration)
     const averageDays = averageNumbers(
       durations,
     )
+    const measuredMinutes = processedTickets
+      .map((item) => diffDurationMinutes(getTicketDate(item.ticket, 'assignation'), item.processedAt))
+      .filter((value): value is number => value !== null)
     const respected = items.filter((ticket) => !ticket.isLate).length
     const lateCount = items.length - respected
     const totalDays = durations.reduce<number>((sum, duration) => sum + (duration ?? 0), 0)
@@ -1883,8 +1924,10 @@ function buildBuyerPerformance(tickets: DashboardTicket[]): ActorPerformance[] {
     return {
       name,
       total: items.length,
+      processedCount: measuredMinutes.length,
       totalDays,
       averageDays,
+      averageMinutes: averageWholeNumbers(measuredMinutes),
       completed,
       inProgress,
       slaRate,
@@ -1915,6 +1958,9 @@ function buildValidatorPerformance(tickets: DashboardTicket[]): ActorPerformance
       (item): item is { ticket: DashboardTicket; validationDate: Date; duration: number } =>
         item.validationDate !== null && item.duration !== null,
     )
+    const measuredMinutes = measuredValidations
+      .map((item) => diffDurationMinutes(getTicketDate(item.ticket, 'creation'), item.validationDate))
+      .filter((value): value is number => value !== null)
     const validated = validations.filter((item) => item.validationDate !== null).length
     const pending = validations.length - validated
     const durations = validations.map((item) => item.duration)
@@ -1925,8 +1971,10 @@ function buildValidatorPerformance(tickets: DashboardTicket[]): ActorPerformance
     return {
       name,
       total: items.length,
+      processedCount: validated,
       totalDays,
       averageDays,
+      averageMinutes: averageWholeNumbers(measuredMinutes),
       completed: validated,
       inProgress: pending,
       slaRate,
@@ -1977,6 +2025,13 @@ function sortActorPerformance(items: ActorPerformance[], sort: PerformanceSort) 
   })
 }
 
+function sortActorRanking(items: ActorPerformance[], sort: ActorRankingSort) {
+  return [...items].sort((a, b) => {
+    if (sort === 'volume') return b.processedCount - a.processedCount
+    return (a.averageMinutes ?? Number.POSITIVE_INFINITY) - (b.averageMinutes ?? Number.POSITIVE_INFINITY)
+  })
+}
+
 function calculateActorScore(volume: number, averageDays: number | null, slaRate: number) {
   const speedScore = averageDays === null ? 40 : Math.max(0, 100 - averageDays * 12)
   const volumeScore = Math.min(100, volume * 20)
@@ -1996,9 +2051,13 @@ function getStageInsights(analysis: ProcessAnalysis) {
 
 function getBuyerInsights(buyers: ActorPerformance[]) {
   const ranked = sortActorPerformance(buyers, 'score')
+  const fastest = [...buyers]
+    .filter((buyer) => buyer.averageMinutes !== null)
+    .sort((a, b) => (a.averageMinutes ?? Number.POSITIVE_INFINITY) - (b.averageMinutes ?? Number.POSITIVE_INFINITY))[0] ?? null
   return {
     ranked,
     best: ranked[0] ?? null,
+    fastest,
     slowest: [...buyers].filter((buyer) => buyer.averageDays !== null).sort((a, b) => (b.averageDays ?? 0) - (a.averageDays ?? 0))[0] ?? null,
   }
 }
@@ -2017,17 +2076,13 @@ function getProcessHealth(
   const slowStageTone = slowestStage === null ? 'slate' as const : slowestStage.tone === 'red' ? 'red' as const : 'amber' as const
   const bestStageTone = bestStage === null ? 'slate' as const : 'green' as const
   const slowBuyerTone = buyerInsights.slowest === null ? 'slate' as const : (buyerInsights.slowest.averageDays ?? 0) > 10 ? 'red' as const : 'amber' as const
-  const status = lateRate >= 25 || stageInsights.criticalStages.some((stage) => stage.tone === 'red') ? 'Sous tension' : lateRate >= 10 ? 'A surveiller' : 'Maitrise'
-  const tone = status === 'Sous tension' ? 'bg-red-50 text-red-700' : status === 'A surveiller' ? 'bg-amber-50 text-amber-700' : 'bg-ades-green/10 text-ades-green'
 
   return {
-    status,
-    tone,
     cards: [
       { label: 'Durée moyenne', value: formatDays(cycle), hint: 'Cycle complet mesuré', tone: cycleTone },
       { label: 'Étape lente', value: slowestStage?.label ?? '-', hint: slowestStage ? formatDays(slowestStage.averageDays) : 'Aucune mesure', tone: slowStageTone },
       { label: 'Étape performante', value: bestStage?.label ?? '-', hint: bestStage ? formatDays(bestStage.averageDays) : 'Aucune mesure', tone: bestStageTone },
-      { label: 'Top acheteur', value: buyerInsights.best?.name ?? '-', hint: buyerInsights.best ? `${buyerInsights.best.score}/100 · ${buyerInsights.best.total} dossiers` : 'Aucun acheteur', tone: 'green' as const },
+      { label: 'Acheteur rapide', value: buyerInsights.fastest?.name ?? '-', hint: buyerInsights.fastest ? `${formatCompactDuration(buyerInsights.fastest.averageMinutes)}` : 'Aucune moyenne', tone: 'green' as const },
       { label: 'Acheteur lent', value: buyerInsights.slowest?.name ?? '-', hint: buyerInsights.slowest ? formatDays(buyerInsights.slowest.averageDays) : 'Aucune mesure', tone: slowBuyerTone },
       { label: 'Taux retard', value: `${lateRate}%`, hint: `${lateTotal} ticket${lateTotal > 1 ? 's' : ''} en retard`, tone: lateRate >= 25 ? 'red' as const : lateRate >= 10 ? 'amber' as const : 'green' as const },
     ],
@@ -2058,10 +2113,20 @@ function diffDays(from: Date | null, to: Date | null) {
   return Math.max(0, Math.round((to.getTime() - from.getTime()) / 86_400_000))
 }
 
+function diffDurationMinutes(from: Date | null, to: Date | null) {
+  if (!from || !to || to.getTime() < from.getTime()) return null
+  return Math.floor((to.getTime() - from.getTime()) / 60_000)
+}
+
 function averageNumbers(values: Array<number | null>) {
   const valid = values.filter((value): value is number => value !== null && Number.isFinite(value))
   if (valid.length === 0) return null
   return Math.round((valid.reduce((sum, value) => sum + value, 0) / valid.length) * 10) / 10
+}
+
+function averageWholeNumbers(values: number[]) {
+  if (values.length === 0) return null
+  return Math.round(values.reduce((sum, value) => sum + value, 0) / values.length)
 }
 
 function stageTone(value: number | null): StageMetric['tone'] {
@@ -2295,6 +2360,22 @@ function formatDays(value: number | null) {
   if (value === 0) return '< 1 j'
   if (value === 1) return '1 j'
   return `${value} j`
+}
+
+function formatCompactDuration(value: number | null) {
+  if (value === null) return '-'
+  if (value < 60) return `${value} min`
+
+  const days = value / 1440
+  if (days >= 1) {
+    const roundedDays = Math.round(days * 10) / 10
+    return `${String(roundedDays).replace('.', ',')} j`
+  }
+
+  const hours = Math.floor(value / 60)
+  const minutes = value % 60
+  if (minutes === 0) return `${hours} h`
+  return `${hours} h ${minutes} min`
 }
 
 function formatPeriodLabel(from: string, to: string) {

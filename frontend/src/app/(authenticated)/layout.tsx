@@ -16,9 +16,8 @@ export default function AuthenticatedLayout({ children }: { children: ReactNode 
     scrollRef.current?.scrollTo({ top: 0, left: 0, behavior: 'auto' })
   }, [pathname])
 
-  const handleLogout = () => {
-    localStorage.removeItem('auth_token')
-    window.location.href = '/auth/login'
+  const handleReturn = () => {
+    window.location.href = 'https://154.126.56.85:1443/'
   }
 
   return (
@@ -50,7 +49,7 @@ export default function AuthenticatedLayout({ children }: { children: ReactNode 
                   variant="ghost"
                   className="rounded-xl text-red-600 hover:bg-red-50"
                   size="sm"
-                  onClick={handleLogout}
+                  onClick={handleReturn}
                 >
                   <LogOut className="w-4 h-4" />
                   <span className="hidden sm:inline">Retour</span>
